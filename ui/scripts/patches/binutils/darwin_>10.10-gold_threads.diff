@@ -1,0 +1,12 @@
+--- gold/gold-threads.cc	2020-10-02 15:07:31.085613751 +0200
++++ gold/gold-threads.cc	2020-10-02 15:38:16.057680078 +0200
+@@ -285,8 +285,7 @@
+ {
+  public:
+   Once_initialize()
+-    : once_(PTHREAD_ONCE_INIT)
+-  { }
++  { once_.__sig = _PTHREAD_ONCE_SIG_init; once_.__opaque[0] = 0; }
+ 
+   // Return a pointer to the pthread_once_t variable.
+   pthread_once_t*
