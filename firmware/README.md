@@ -105,3 +105,18 @@ For bug reports, read
 ...
 ```
 
+### OpenOCD raises and error when debug with unexpected idcode
+
+```textplain
+Warn : UNEXPECTED idcode: 0x2ba01477
+Error: expected 1 of 1: 0x1ba01477
+```
+
+Change the cpu identifier in `Config/smt32f1x.cfg:L42`
+
+```config
+# From
+set _CPUTAPID 0x1ba01477
+# To
+set _CPUTAPID 0x2ba01477
+```
