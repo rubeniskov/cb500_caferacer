@@ -91,7 +91,7 @@ log_wrap() {
   local tracedest
   local pname
   local cmd
-  echo "$@"
+  
   set -- $@
   while [[ $# -gt 0 ]]; do
     case $1 in
