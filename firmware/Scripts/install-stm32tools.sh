@@ -166,13 +166,28 @@ install_stlink_board_upgrade() {
     popd > /dev/null
 }
 
-install_stlink_flash() {
+install_stm32flash() {
     pushd $TMP_DIR > /dev/null
     if [ ! -d stm32flash ]; then 
         git clone https://github.com/ARMinARM/stm32flash.git
         pushd stm32flash > /dev/null
         make
         cp stm32flash $TOOLS_DIR
+        popd > /dev/null
+    fi
+    popd > /dev/null
+}
+
+install_stlink() {
+    pushd $TMP_DIR > /dev/null
+    if [ ! -d stlink ]; then 
+        git clone https://github.com/stlink-org/stlink.git
+    fi
+
+    if [ ! -f $TOOLS_DIR/st-info ]; then
+        pushd stlink > /dev/null
+        make 
+        cp build/Release/bin/st* $TOOLS_DIR
         popd > /dev/null
     fi
     popd > /dev/null
@@ -190,7 +205,8 @@ echo "-> Creating temp folder $TMP_DIR"
 mkdir -p $TMP_DIR
 install_stm32cubemx
 install_stlink_board_upgrade
-install_stlink_flash
+install_stm32flash
+install_stlink
 cleanup
 
 echo "Installed Tools in $TOOLS_DIR"
