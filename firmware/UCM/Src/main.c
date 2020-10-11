@@ -25,8 +25,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "img.h"
-#include "SSD1331.h"
+#include "oled.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -67,11 +66,13 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan1)
   HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);                      // toggle PA3 LED
 }
 
-void wait_and_clear() {
-    HAL_Delay(1000);
-    // clear display
-    SSD1331_drawFrame(0,0,96,64, COLOR_BLACK, COLOR_BLACK);
-    HAL_Delay(500);
+void wait_and_clear()
+{
+  HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+  HAL_Delay(1000);
+  // clear display
+  UCM_OLED_Draw_Frame(0, 0, 96, 64, COLOR_BLACK, COLOR_BLACK);
+  HAL_Delay(500);
 }
 /* USER CODE END 0 */
 
@@ -91,7 +92,6 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -111,134 +111,36 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 
-  canfil.FilterBank = 0;
-  canfil.FilterMode = CAN_FILTERMODE_IDMASK;
-  canfil.FilterFIFOAssignment = CAN_RX_FIFO0;
-  canfil.FilterIdHigh = 0;
-  canfil.FilterIdLow = 0;
-  canfil.FilterMaskIdHigh = 0;
-  canfil.FilterMaskIdLow = 0;
-  canfil.FilterScale = CAN_FILTERSCALE_32BIT;
-  canfil.FilterActivation = ENABLE;
-  canfil.SlaveStartFilterBank = 14;
+  // canfil.FilterBank = 0;
+  // canfil.FilterMode = CAN_FILTERMODE_IDMASK;
+  // canfil.FilterFIFOAssignment = CAN_RX_FIFO0;
+  // canfil.FilterIdHigh = 0;
+  // canfil.FilterIdLow = 0;
+  // canfil.FilterMaskIdHigh = 0;
+  // canfil.FilterMaskIdLow = 0;
+  // canfil.FilterScale = CAN_FILTERSCALE_32BIT;
+  // canfil.FilterActivation = ENABLE;
+  // canfil.SlaveStartFilterBank = 14;
 
-  txHeader.DLC = 8; // Number of bites to be transmitted max- 8
-  txHeader.IDE = CAN_ID_STD;
-  txHeader.RTR = CAN_RTR_DATA;
-  txHeader.StdId = 0x030;
-  txHeader.ExtId = 0x02;
-  txHeader.TransmitGlobalTime = DISABLE;
+  // txHeader.DLC = 8; // Number of bites to be transmitted max- 8
+  // txHeader.IDE = CAN_ID_STD;
+  // txHeader.RTR = CAN_RTR_DATA;
+  // txHeader.StdId = 0x030;
+  // txHeader.ExtId = 0x02;
+  // txHeader.TransmitGlobalTime = DISABLE;
 
-  HAL_CAN_ConfigFilter(&hcan, &canfil);                             //Initialize CAN Filter
-  HAL_CAN_Start(&hcan);                                             //Initialize CAN Bus
-  HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING); // Initi
-  char buffer[40];
-	char i;
-	const char *str_inFlash ="avislab.com/blog";
-
-
+  // HAL_CAN_ConfigFilter(&hcan, &canfil);                             //Initialize CAN Filter
+  // HAL_CAN_Start(&hcan);                                             //Initialize CAN Bus
+  // HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING); // Initi
+  // HAL_Delay(1000);
+  UCM_OLED_Init();
   while (1)
   {
-    HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
-
-    // initialization
-    SSD1331_init();
-
-    wait_and_clear();
-
-    // lines
-    for (i = 0; i < 24; i++) {
-    	SSD1331_drawLine(0, 0, i*4, 64, RGB(i*10,0,0));
-    	SSD1331_drawLine(96, 0, i*4, 64, RGB(i*10,0,0));
-    	HAL_Delay(20);
-	}
-    wait_and_clear();
-
-    // circle
-    SSD1331_drawCircle(48, 32, 5, COLOR_BLUE);
-    HAL_Delay(50);
-    SSD1331_drawCircle(48, 32, 10, COLOR_GOLDEN);
-    HAL_Delay(50);
-    SSD1331_drawCircle(48, 32, 15, COLOR_BLUE);
-    HAL_Delay(50);
-    SSD1331_drawCircle(48, 32, 20, COLOR_GOLDEN);
-    HAL_Delay(50);
-    SSD1331_drawCircle(48, 32, 25, COLOR_BLUE);
-    HAL_Delay(50);
-    SSD1331_drawCircle(48, 32, 30, COLOR_GOLDEN);
-    wait_and_clear();
-
-    // rect
-    for (i = 0; i < 5; i++) {
-    	SSD1331_drawFrame(i*5, i*5, 96-i*5, 64-i*5, COLOR_RED, COLOR_YELLOW);
-    	HAL_Delay(20);
-	}
-    SSD1331_drawFrame(25, 25, 71, 39, COLOR_BLUE, COLOR_GREEN);
-    wait_and_clear();
-
-    // text FONT_1X
-    SSD1331_SetXY(0,0);
-    for (i = 33; i < 126; i++) {
-    	SSD1331_Chr(FONT_1X, i, COLOR_BLUE, COLOR_BLACK);
-    	SSD1331_XY_INK(FONT_1X);
-	}
-    wait_and_clear();
-
-    // text FONT_2X
-    SSD1331_SetXY(0,0);
-    for (i = 33; i < 64; i++) {
-    	SSD1331_Chr(FONT_2X, i, COLOR_BROWN, COLOR_BLACK);
-    	SSD1331_XY_INK(FONT_2X);
-	}
-    wait_and_clear();
-
-    // Numeric FONT_2X
-    sprintf(buffer, "%s", "3758");
-    SSD1331_SetXY(0, 0);
-    SSD1331_Str(FONT_2X,(unsigned char*)buffer, COLOR_WHITE, COLOR_BLACK);
-    wait_and_clear();
-
-    // Numeric FONT_4X
-    SSD1331_SetXY(0, 0);
-    SSD1331_Str(FONT_4X,(unsigned char*)buffer, COLOR_WHITE, COLOR_BLACK);
-    wait_and_clear();
-
-    // Images
-    SSD1331_IMG(IMG0, 0,0, 96,64);
-    wait_and_clear();
-
-    SSD1331_IMG(IMG1, 16,0, 64,64);
-    wait_and_clear();
-
-    // copy window
-    SSD1331_IMG(IMG3, 32,16, 32,32);
-    SSD1331_copyWindow(32,16,64,48, 0,0);
-    wait_and_clear();
-
-    // scrolling
-    SSD1331_IMG(IMG2, 23,7, 50,50);
-    SSD1331_setScrolling(Horizontal, 0, 64, 1);
-    SSD1331_enableScrolling(TRUE);
-
-    wait_and_clear();
-    SSD1331_enableScrolling(FALSE);
-    // text from Flash
-    SSD1331_SetXY(0, 24);
-    SSD1331_FStr(FONT_1X,(unsigned char*)str_inFlash, COLOR_BLUE, COLOR_BLACK);
-
-    /*uint8_t csend[] = {0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01};
-    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, 1);
-    if (HAL_CAN_AddTxMessage(&hcan, &txHeader, csend, &canMailbox) != HAL_OK)
-    {
-      Error_Handler();
-    }*/
-    /*HAL_Delay(300);
-    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, 0);
-    HAL_Delay(1000);*/
+    UCM_OLED_Draw();
   }
-    /* USER CODE END WHILE */
+  /* USER CODE END WHILE */
 
-    /* USER CODE BEGIN 3 */
+  /* USER CODE BEGIN 3 */
   /* USER CODE END 3 */
 }
 
@@ -267,8 +169,7 @@ void SystemClock_Config(void)
   }
   /** Initializes the CPU, AHB and APB buses clocks
   */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
-                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
@@ -299,7 +200,7 @@ void Error_Handler(void)
   /* USER CODE END Error_Handler_Debug */
 }
 
-#ifdef  USE_FULL_ASSERT
+#ifdef USE_FULL_ASSERT
 /**
   * @brief  Reports the name of the source file and the source line number
   *         where the assert_param error has occurred.

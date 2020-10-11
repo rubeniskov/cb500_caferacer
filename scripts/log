@@ -1,0 +1,297 @@
+#!/usr/bin/env bash
+
+SCRIPT_DIR="$(cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd)"
+
+source "$SCRIPT_DIR/common"
+
+ESC_SEQ="\x1b["
+COL_RESET=$ESC_SEQ"39;49;00m"
+COL_RED=$ESC_SEQ"31;01m"
+COL_GREEN=$ESC_SEQ"32;01m"
+COL_YELLOW=$ESC_SEQ"33;01m"
+COL_BLUE=$ESC_SEQ"34;01m"
+COL_MAGENTA=$ESC_SEQ"35;01m"
+COL_CYAN=$ESC_SEQ"36;01m"
+
+# TABLE=<<-EOF
+# --err error $COL_RED 1
+# --ok ok $COL_GREEN 1
+# --wrn warn $COL_YELLOW 1
+# --header false $COL_GREEN 1
+# EOF
+
+log() {
+  local ret
+  local label
+  local msg
+  local color
+  local cols=$(tput cols)
+  local logfile=$(log_filename)
+  local verbose=$(log_flag_verbose $@)
+  local showverb
+  
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      -l|--logfile)
+        logfile="$(log_filename $2)"
+        shift 2
+      ;;
+      --strip)
+        shift 2
+      ;;
+      --err)
+        label="error"
+        color=$COL_RED
+        showverb=1
+        shift 1
+        ;;
+      --ok)
+        label="ok"
+        color=$COL_GREEN
+        showverb=1
+        shift 1
+        ;;
+      --prg:*)
+        ret=1
+        label=${1//--prg:/}
+        color=$COL_YELLOW
+        showverb=1
+        shift 1
+        ;;
+      --wrn)
+        label="warn"
+        color=$COL_YELLOW
+        showverb=1
+        shift 1
+        ;;
+      --header)
+        color=$COL_BLUE
+        showverb=1
+        shift 1
+        ;;
+      --verbose)
+        verbose=1
+        shift 1
+      ;;
+      --)
+        shift 1
+      ;;
+      *)
+        break
+      ;;
+    esac
+  done
+
+  msg="$@"
+  if [ -e "$msg" ]; then
+    msg="$(cat $msg)"
+  fi
+
+  echo -ne "$msg\n" > $logfile
+  
+  if [ -z $label ]; then
+    if [ ! -z $color ]; then
+      msg="$color$msg$COL_RESET"
+    fi
+  else
+    if [ -z $color ]; then
+      msg="[ $(printf "%5s" $label) ] $msg"
+    else
+      msg="[ $color$(printf "%5s" $label)$COL_RESET ] $msg"
+    fi
+  fi
+
+  if [ ! -z $showverb ] || [ ! -z $verbose ]; then
+    if [ ! -z $ret  ]; then
+      echo -en >&2 "\033[K$msg\r"
+    else
+      echo -en >&2 "$msg\n"
+    fi
+  fi
+
+  return 0
+}
+
+log_init() {
+   log --logfile $@ "Using logfile $1"
+   echo "" > "$1"
+}
+
+log_wrap_get_cmd_args() {
+  echo "$@" | awk -F' \\-\\- ' '{print $2}' 
+}
+
+log_wrap_get_log_args() {
+  echo "$@" | awk -F' \\-\\- ' '{print $1}' 
+}
+
+log_wrap() {
+  local exit_code=0
+  local cmd="$(log_wrap_get_cmd_args "$@")"
+  local largs="$(log_wrap_get_log_args "$@")"
+  local logfile=$(log_flag_logfile $largs)
+  local verbose=$(log_flag_verbose $largs)
+  local pname=$(log_arg_label $largs)
+  
+  if [ ! -z $verbose ]; then 
+    log $largs "Wrapping process -> $cmd"
+    $cmd 2>&1 | tee -a $logfile
+    exit_code=${PIPESTATUS[0]} 
+  else
+    ($cmd 2>&1 | tee -a $logfile; exit ${PIPESTATUS[0]}) &> /dev/null
+    exit_code=${PIPESTATUS[0]}
+  fi
+
+  if [ $exit_code -eq 0 ]; then 
+    log $largs --ok "$pname done!"
+  else
+    log $largs --err "$pname failed!"
+    log_errexit $largs
+  fi
+  return $exit_code
+}
+
+log_wrap_progress() {
+  local total=0
+  local cmd="$(log_wrap_get_cmd_args "$@")"
+  local largs="$(log_get_flags "$@")"
+  local pname=$(log_arg_label $largs)
+  local strip=$(echo $largs | get_flag_value --strip 0)
+  
+  log_wrap --verbose $@ 2>&1 |\
+  while read line; do
+    stderr+=$line
+    total=$((total+1))
+    log $largs "--prg:$total" "$pname ${line:$strip}"
+  done
+
+  exit_code=${PIPESTATUS[0]}
+  
+  if [ ! $exit_code -eq 0 ]; then
+    log_errexit <<<$stderr
+  fi
+
+  return $exit_code
+}
+
+log_filename() {
+  if [ -z $1 ]; then
+    echo "/dev/null"
+  fi
+  if [ ! -f $1 ]; then 
+    echo > $1
+  fi
+  echo "$1"
+}
+
+log_flag_logfile() {
+  log_filename $(echo "$@" | get_flag_value --logfile)
+}
+
+log_flag_verbose() {
+  if [[ "$@" == *"--verbose"* ]] || [[ "$@" == *"-V"* ]]; then
+    echo "--verbose"
+  fi
+}
+
+log_arg_label() {
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      -l|--logfile)
+        shift 2
+      ;;
+      -l|--verbose)
+        shift 1
+      ;;
+      -s|--strip)
+        shift 2
+      ;;
+      *)
+        break
+      ;;
+    esac
+  done
+  echo "$@"
+}
+
+log_get_flags() {
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      -l|--logfile|-s|--strip)
+        echo -ne " $1 $2"
+        shift 2
+      ;;
+      -l|--verbose)
+        echo -ne " $1"
+        shift 1
+      ;;
+      *)
+        shift 1
+      ;;
+    esac
+  done
+}
+
+log_wrap_wget_progress() {
+  local flag=false c count cr=$'\r' nl=$'\n'
+  while IFS='' read -d '' -rn 1 c; do
+    if $flag; then
+      printf '%s' "$c"
+    else
+      if [[ $c != $cr && $c != $nl ]]; then
+        count=0
+      else
+        ((count++))
+        if ((count > 1)); then
+          flag=true
+        fi
+      fi
+    fi
+  done
+}
+
+log_errexit() {
+  local logfile
+  local info
+  local infoheader
+  local cols=$(tput cols) 
+  
+  set -- $@
+
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      -l|--logfile)
+        logfile="$2"
+        break
+      ;;
+      *)
+        break
+      ;;
+    esac
+  done
+
+  info="$@"
+
+  if [ -e "$1" ]; then
+    info="$(cat $1)"
+  fi
+
+  if [ -f $logfile ]; then
+    extrainfo=$(cat <<-EOF
+Check the logfile $logfile to see more information:
+EOF
+)
+  fi
+
+  echo -ne "$info\n" > $logfile
+
+  cat <<-EOF
+
+Something wrong happend!! This may help you
+
+$info
+
+$extrainfo
+EOF
+  exit 1
+}

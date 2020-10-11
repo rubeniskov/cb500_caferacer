@@ -13,11 +13,12 @@ Which offers CAN Bus, ADC->DMA, USB... and multiple GPIO's to manage the inputs 
 ./firmware/
   |-- ECU/                 Engine Control Unit
   |-- BCM/                 Body Control Module
-  |-- Inc/                 Common firmware includes
-  |-- Config/              Debugging and deploy configuration...
-  |-- Docs/                Documentation, Schematics, Images...
+  |-- UCM/                 User Control Module
+  |-- inc/                 Common firmware includes
+  |-- config/              Debugging and deploy configuration...
+  |-- docs/                Documentation, Schematics, Images...
 ```
-> For more information about `Engine Control Unit` and `Body Control Module` please refer to [./ECU](./ECU) and [./BCM](./BCM) 
+> For more information about `Engine Control Unit`, `Body Control Module` and `User Control Module` please refer to [./ECU](./ECU), [./BCM](./BCM), [./UCM](./UCM) 
 
 ## Development Tools Installation
 

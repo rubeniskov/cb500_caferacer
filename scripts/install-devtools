@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+
+SCRIPT_SHELL_NAME="$0"
+SCRIPT_SHELL_ARGS="$@"
+SCRIPT_SHELL_FILENAME="$(basename $0)"
+SCRIPT_DIR="$(cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd)"
+
+# $SCRIPT_DIR/install-requirements "$SCRIPT_SHELL_ARGS"
+$SCRIPT_DIR/install-stm32-devtools "$SCRIPT_SHELL_ARGS"
+exit
+$SCRIPT_DIR/install-rpi-devtools "$SCRIPT_SHELL_ARGS"

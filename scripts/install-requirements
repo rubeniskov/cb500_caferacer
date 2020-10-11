@@ -1,0 +1,60 @@
+SCRIPT_SHELL_NAME="$0"
+SCRIPT_SHELL_ARGS="$@"
+SCRIPT_SHELL_FILENAME="$(basename $0)"
+SCRIPT_DIR="$(cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd)"
+
+source "$SCRIPT_DIR/log"
+
+DIR_TOOLCHAIN_BIN="$(realpath $DIR_TOOLCHAIN)/bin"
+LOGFILE="$(pwd)/$SCRIPT_SHELL_FILENAME.log"
+
+lflags="--logfile $LOGFILE $SCRIPT_SHELL_ARGS"
+
+requirements=$(cat <<EOF
+rsync>3.2.3
+git
+coreutils
+EOF
+)
+
+log --header "Checking pkg manager for this os system $HOST_OS" 
+case $HOST_OS in
+  darwin)
+    xcode-select --install 2> /dev/null
+    
+    if ! type brew > /dev/null; then
+      log_wrap $lflags --header "Installing brew" -- /bin/bash -c \
+      "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install.sh)" 
+    else
+      log --ok "brew is already installed"
+    fi
+  ;;
+  linux)
+    sudo apt-get update
+  ;;
+  *) 
+    log_errexit $lflags "Invalid operating system $os"
+  ;;
+esac 
+
+log --header "Checking minimum requirements" 
+
+for req in $requirements; do
+  req_chunks=$(echo $req | sed -e 's/\([><=]\)/ \1 /g')
+  set -- $req_chunks
+  bin_path="$(os_get_bin_path $1)"
+  if [[ -z "$bin_path" ]]; then
+    os_install_pkg $1
+  elif [[ ! -z "$2" ]]; then
+    curv=$(os_get_bin_version "$bin_path")
+    if semver "$3 $2 $curv" ; then
+      log "Seems you have an old $bin_path@$curv version... \
+      and need $1$2$3 so it will install such version" 
+      log_wrap "Installing $1$2$3" -- os_install_pkg $1
+    else
+      log --ok "$1 is already installed with the right version $3"
+    fi
+  else
+    log --ok "$1 is already installed"
+  fi
+done

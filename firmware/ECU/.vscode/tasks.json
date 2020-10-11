@@ -1,15 +1,1 @@
-{
-    // See https://go.microsoft.com/fwlink/?LinkId=733558
-    // for the documentation about the tasks.json format
-    "version": "2.0.0",
-    "tasks": [
-        {
-            "label": "build",
-            "type": "shell",
-            "command": "DEBUG=1 GCC_PATH=/usr/local/opt/arm-none-eabi-gcc/bin/ make -j8",
-            "options": {
-                "cwd": "${workspaceRoot}"
-            }
-        }
-    ]
-}
+../../config/tasks.json

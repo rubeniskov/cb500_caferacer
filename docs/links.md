@@ -1,1 +1,2 @@
 - [Diy DIY Double sided PCB with Vias](https://www.youtube.com/watch?v=kYQZz9IWVq8)
+- [Tinning solution from the hardware store](https://hackaday.com/2017/10/23/tinning-solution-from-the-hardware-store/)

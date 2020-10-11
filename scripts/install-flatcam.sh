@@ -15,7 +15,6 @@ FLATCAM_VERSION=8.993
 FLATCAM_FILENAME=FlatCAM_beta_${FLATCAM_VERSION}
 
 log "Using temporary directory $DIR_TMP"
-mkdir -p $DIR_TMP
 
 pushd $DIR_TMP
 case $(uname -s) in

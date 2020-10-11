@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+
+SCRIPT_SHELL_NAME="$0"
+SCRIPT_SHELL_ARGS="$@"
+SCRIPT_SHELL_FILENAME=$(basename $0)
+SCRIPT_DIR=$(cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd)
+
+source "$SCRIPT_DIR/pkg.sh"
+
+DIR_PWD=$(pwd)
+DIR_TMP="$(mktempd $SCRIPT_SHELL_FILENAME)"
+LOGFILE="$(pwd)/$SCRIPT_SHELL_FILENAME.log"
+BUILD_FLAGS="-v"
+
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --clean)
+      rm -rf $DIR_TMP
+      exit $?
+    ;;
+    *)
+      shift 1
+    ;;
+  esac
+done 
+
+log_init $LOGFILE "$SCRIPT_SHELL_ARGS"
+
+pkg_parse_config \
+  $DIR_PWD/pkg-stm32-devtools.conf \
+  --toolchaindir $DIR_TOOLCHAIN \
+  --tempdir $DIR_TMP \
+  --logfile $LOGFILE \
+  "$SCRIPT_SHELL_ARGS" \
+  -- $BUILD_FLAGS
+
+# if [[ $HOST_OS == "darwin" ]] && type brew > /dev/null ; then  
+#     brew tap ArmMbed/homebrew-formulae
+#     brew install arm-none-eabi-gcc
+#     brew install open-ocd --HEAD
+# fi 

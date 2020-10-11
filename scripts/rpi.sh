@@ -1,0 +1,39 @@
+rpi_check_conection() {
+  log --header "Checking raspberry pi ssh connection"
+  ssh_response=$(ssh ${1} exit 2>&1);
+  if [ $? -eq 0 ]; then
+    log --ok "Raspberry ssh connection is active and reacheable"
+    return 0
+  else
+    log --err "RaspberryPi not reacheable through (ssh ${1}), check your connection "
+    echo $ssh_response
+    return 1
+  fi
+}
+
+# rpi_exec_batch <host> <cmd>
+rpi_exec_cmd() {
+  ssh -q ${1} "${@:2}" 2> /dev/null
+  return $?
+}
+
+# rpi_exec_batch <host> <file>
+# rpi_exec_batch <host> < <file>
+rpi_exec_batch() {
+  local content
+  local host
+  local sheader="echo -en >&2 '\n################### START RASPBERRY PI CONTEXT ###################\n\n'"
+  local eheader="echo -en >&2 '\n################### END RASPBERRY PI CONTEXT ###################\n\n'"
+  
+  if [ ! -t 0 ]; then
+    content=`cat`
+    host=$1
+    shift 1
+  else
+    content=$(cat $2)
+    host=$1
+    shift 2
+  fi
+
+  ssh -q ${host} <(echo "${sheader}${content}${eheader}")
+}

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+
+DIR_SCRIPTS="$(dirname ${BASH_SOURCE[0]})"
+DIR_SYSROOT="$(realpath $DIR_SCRIPTS/../sysroot)"
+DIR_TOOLCHAIN="$(realpath $DIR_SCRIPTS/../toolchain)"
+DIR_PATCHES="$(realpath $DIR_SCRIPTS/../patches)"
+
+HOST_OS=$(uname -s | awk '{print tolower($0)}')

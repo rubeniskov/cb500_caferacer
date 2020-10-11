@@ -1,7 +1,13 @@
+#!/usr/bin/env bash
+
+SCRIPT_DIR="$(cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd)"
+
+source "$SCRIPT_DIR/log"
+
 # pkg_patchakra dir_patches 
 pkg_patchakra() {
-  local os=$(uname -s)
-  local dir=$1
+  local os=$HOST_OS
+  local patches=$1
   
   if [ ! -d $1 ]; then 
     return 0
@@ -9,9 +15,9 @@ pkg_patchakra() {
 
   log "Looking for patches to apply... in $1"
 
-  for file in $(ls $1|grep -i $os); do
+  for patch in $patches; do
     local apply=false
-    local chunks=$(echo $file | tr '-' ' ')
+    local chunks=$(echo $patch | tr '-' ' ')
     set -- $chunks
     local criterias=$(echo $1 | tr '_' ' ')
     local desc=$2
@@ -21,17 +27,18 @@ pkg_patchakra() {
     if [[ "$2" =~ ^([\<\>\=])([0-9]+)(\.[0-9]+)*$ ]]; then
       local version="${2:1}"
       local matcher="${2:0:1}"
-      if semver "$(osdistver) $matcher $version"; then
+      if semver "$(os_dist_version) $matcher $version"; then
         apply=true  
       fi
     fi; 
 
     if [ $apply = true ];then
-        patch -p0 -Nb < $dir/$file
+        patch -p0 -Nb < $patch
         if [ $? -eq 0 ]; then
-          log --ok "Applied patch $file"
+          log --ok "Applied patch $patch"
         else
-          log --err "Error when apply patch $file"
+          log --err "Error when apply patch $patch"
+          log_errexit "The process can't continue due a patch couldn't be able to be applied"
         fi
     fi 
   done 
@@ -44,24 +51,37 @@ pkg_parse_config() {
   local pkgconfig
   local pkgname
   local args
-
+  local lflags
+  local skip_os
+  local tagpattern="a-z0-9_-"
+  
   if [ ! -t 0 ]; then
     filecontent=`cat`
     args="$@"
+    lflags=$(log_get_flags $@)
   else
     filecontent=$(cat $1)
     args="${@:2}"
+    lflags=$(log_get_flags $@)
   fi
   
   while IFS= read -r line; do
-    if [[ $line =~ ^(\[([a-z_-]+)\])$ ]]; then
+    if [[ $line == \#* ]]; then 
+      continue
+    fi
+    if [[ $line =~ ^(\[([$tagpattern]+)\])$ ]]; then
       if [ ! -z $pkgname ]; then 
         pkg_build_install $pkgname $args <<< "$pkgconfig"
       fi
+      skip_os=
       pkgname=${BASH_REMATCH[2]}
       pkgconfig=
-    else
-      pkgconfig="$(printf "%s\n%s" "$pkgconfig" "$line")"
+      log $lflags "Detected $pkgname config"
+    elif [[ $line =~ ^(\(([$tagpattern]+)\))$ ]]; then
+        log $lflags "Detected match os expresion for ${BASH_REMATCH[2]}"
+        [[ ${BASH_REMATCH[2]} != $HOST_OS ]] && skip_os=1 || skip_os=
+    elif [[ -z $skip_os ]]; then  
+      [ ! -z "$line" ] && pkgconfig+="$line\n"
     fi
   done <<< "$filecontent"
 
@@ -77,40 +97,39 @@ pkg_build_install() {
   local filename
   local cflags=$(echo $@|awk -F' -- ' '{ print $2 }')
   local dflags
-  local lflags
+  local lflags=$(log_get_flags $@)
   local tmpdir
   local patchesdir
+  local toolchaindir
   local verbose
   local args
+  local nproc=$([ type nproc 2> /dev/null ] && nproc || sysctl -n hw.physicalcpu)
 
-  # tokens
-  #declare -A tokens 
   local ctoken
   local tcontent
-  # local url 
-  # local filecheck
-  # local homepage
-  # local sha256
-  # local preconfig
-  # local postconfig
-  # local version
   
   if [ ! -t 0 ]; then
     pkgname=$1
-    pkgconfig=`cat`
+    pkgconfig="$(cat)"
     shift 1
   else
     pkgname=$2
-    pkgconfig=$(cat $1)
+    pkgconfig="$(cat $1)"
     shift 2
   fi
 
+  log $lflags <(echo -ne "Config details:\n$(echo -ne "$pkgconfig"|sed -e 's/^/-> /')")
+
   set -- $@
-   
+
   while [[ $# -gt 0 ]]; do
     case $1 in
       -t|--tempdir)
         tmpdir="$2"
+        shift 2
+      ;;
+      -T|--toolchaindir)
+        toolchaindir="$2"
         shift 2
       ;;
       -p|--patchesdir)
@@ -121,10 +140,6 @@ pkg_build_install() {
         dflags="$2"
         shift 2
       ;;
-      -l|--logfile)
-        lflags+=" --logfile $2"
-        shift 2
-      ;;
       -V|--verbose)
         verbose=1
         shift 1
@@ -133,33 +148,36 @@ pkg_build_install() {
         break
       ;;
       *)
-        echo "Usage"
-        exit 1
+        break;
       ;;
     esac
   done 
-  
+
   sources=${pkgname}_src
   
-  if [ -z "$lflags" ]; then
-    lflags+=" --logfile $(pwd)/pkg_build_install-$pkgname.log"
-  fi
-
-  if [ ! -z $verbose]; then
-    lflags+=" --verbose"
-  fi
-
   if [ -z "$tmpdir" ]; then
     log $lflags --err "Temporary directory must be defined\n" 
+    log_errexit "The process can't continue due a temporary diretory must be provided"
+  fi
+
+  if [ ! -d "$tmpdir" ]; then
+    log $lflags --err "Temporary directory must exists\n" 
+    log_errexit "The process can't continue due a temporary diretory is not exist check $tmpdir"
   fi
   
-  while IFS=  read -r line; do
+  while read -r line; do
     set -- $line
     case $1 in 
       url|version|filecheck|homepage|\
-      sha256|configflags|preconfig|postconfig)
+      sha256|configflags|buildflags|\
+      preinstall|postinstall|prebuild|\
+      postbuild|preconfig|postconfig|\
+      testspec|patches)
         if [ ! -z "$ctoken" ]; then
-          tcontent="$(eval "export version="${version}"; echo "$tcontent"")"
+          tcontent="$(eval "\
+            export toolchaindir="${toolchaindir}"; \
+            export version="${version}"; \
+            echo "$tcontent"")"
           # nasty way to create dynamic variable due 
           # there's no way to make an associative array in bash 3
           eval "local $ctoken="\"$tcontent\"""
@@ -174,123 +192,138 @@ pkg_build_install() {
         tcontent+="$line"
       ;;
     esac 
-  done <<< "$pkgconfig"
+  done <<< "$(echo -ne $pkgconfig)"
   
   
   if [ ! -z "$ctoken" ]; then
     eval "local $ctoken="\"$tcontent\"""
   fi
-
+  
   filename="${url##*/}"
+  extension=${url##*.}
   signaturefile="${sha256##*/}"
   
   pushd $tmpdir > /dev/null
   
-  # if [ ! -f $signaturefile ]; then 
-  #   log --header "Downloading $signaturefile"
-  #   log_wrap $lflags -n "Download" \
-  #     pkg_download \
-  #       $dflags \
-  #       --output-document=$signaturefile \
-  #       $sha256
-  # fi
+  log $lflags --header "Installing pkg $pkgname"
 
-  if [ ! -f $filename ]; then 
-    log $lflags --header "Downloading $filename"
-    pkg_download \
+  if [ ! -z "$testspec" ] && $testspec &>/dev/null; then
+    log --ok "$pkgname already installed!"
+    return 0
+  fi
+
+  ## Download
+  if [ "$extension" == "git" ] && [ ! -d $sources ]; then
+      git clone $url $sources
+      if [ ! -z $version ]; then
+        pushd >/dev/null
+        git checkout $version  
+        popd >/dev/null
+      fi
+  else
+    if [ ! -f $filename ]; then 
+      log_wrap $lflags --verbose "Download" -- pkg_download \
         $dflags \
         --output-document=$filename \
         $url
+    fi
+
+    if [ -f $filename ] && [ ! -z $sha256 ]; then
+      sha256sum=$(sha256sum $filename | awk '{ print $1}')
+      if [ $sha256sum != $sha256 ]; then
+        log --err $lflags "Checking sha256sum failed"
+        log_errexit $lflags <(cat <<-EOF
+Wrong signature
+  Actual: $sha256sum
+  Expected: $sha256
+
+EOF
+)
+      else
+        log --ok $lflags "Checking sha256sum done"
+      fi
+    fi
   fi
 
-  # if [ -f $signaturefile ]; then
-  #   log --header "Checking signature $filename"
-  #   gpg --keyserver $(echo $signaturefile | awk -F[/:] '{print $4}') ${KEY_ID}
-  #   exit
-  #   gpg --no-default-keyring --verify $signaturefile $filename
-
-  #   if [ $? -eq 0 ]
-  #   then
-  #       log $lflags --ok "All is well"
-  #   else
-  #       log_errexit $lflags "Problem with signature"
-  #   fi
-  # fi
-
+  ## Unpacking
   if [ ! -d $sources ]; then
-    log $lflags --header "Unpacking $filename"
     mkdir -p $sources
     pushd $sources > /dev/null
-    pkg_unpack --strip-components 1 -xf ../$filename
-    if [ ! $? -eq 0 ]; then
-      rm $sources
+    if ! log_wrap_progress $lflags --strip 2 "Unpack" -- \
+       tar v --strip-components 1 -xf "../$filename"; then
+      popd
+      rm -rf $sources
     fi
     popd > /dev/null
   fi
-  
-  if [ -z "$filecheck" ] || [ ! -f "$filecheck" ]; then 
+
+  ## Patching
+  if [ ! -z "$patches" ]; then
     pushd $sources > /dev/null
-    #pkg_patchakra $DIR_PATCHES/$basename
-    
-    log $lflags --header "Setting up $filename"
+    pkg_patchakra $patches
+    popd > /dev/null
+  fi
 
-    if [ ! -z "$preconfig" ]; then      
-      log_wrap $lflags -n "Pre configure" -- \
-        "$preconfig"
-    fi
+  pushd $sources > /dev/null
+
+  if [ ! -z "$preconfig" ]; then      
+    log_wrap $lflags "Pre configure" -- \
+      "$preconfig"
+  fi
+
+  if [ -f configure ]; then
     mkdir -p build
-    pushd build
-    log_wrap $lflags -n "Configure" -- \
-      ../configure $cflags $extraflags $configflags
+    pushd build > /dev/null
+    
+    log_wrap $lflags "Configure" -- \
+      ../configure $cflags --prefix="$toolchaindir" "$configflags"
+    popd > /dev/null
+  fi
 
-    if [ ! -z $postconfig ]; then
-      log_wrap $lflags -n "Post configure" -- \
-        "$postconfig"
+  if [ ! -z "$postconfig" ]; then
+    log_wrap $lflags "Post configure" -- \
+      "$postconfig"
+  fi
+
+  if [ -f build/Makefile ] || [ -f Makefile ]; then
+    pushd $(dirname $(ls {build,.}/Makefile 2>/dev/null)) > /dev/null
+
+    if [ ! -z $prebuild ]; then
+      log_wrap $lflags "Pre build" -- \
+        "$prebuild"
     fi
 
-    log $lflags --header "Building $filename"
-    log_wrap $lflags -n "Build" -- make -j$HOST_NPROC
+    log_wrap $lflags "Build" -- make -j$nproc
 
-    log $lflags --header "Installing $filename"
-    log_wrap $lflags -n "Install" -- make install
+    if [ ! -z $postbuild ]; then
+      log_wrap $lflags "Post build" -- \
+        "$postbuild"
+    fi
+
+    if [ ! -z $preinstall ]; then
+      log_wrap $lflags "Pre install" -- \
+        "$preinstall"
+    fi
+
+    log_wrap $lflags "Install" -- make install
+    
+    if [ ! -z $postinstall ]; then
+      log_wrap $lflags "Post install" -- \
+        "$postinstall"
+    fi
     popd > /dev/null
-    popd > /dev/null
+  elif ls {bin,lib} &>/dev/null; then
+    log_wrap_progress $lflags "Install" -- rsync -vrzLR {bin,lib} "$toolchaindir/"
+  fi
+  popd > /dev/null
+  
+  if [ ! -z "$testspec" ]; then
+    log_wrap $lflags "Testing $pkgname" -- "$testspec"
   fi
   popd > /dev/null
 }
 
 pkg_download() {
-    wget "$@" --progress=bar:force 2>&1 | log_wrap_wget_progress $lflags
+    wget "$@" --progress=bar:force 2>&1 | log_wrap_wget_progress $@
 }
 
-pkg_unpack() {
-  local total=0
-  local lflags
-  local stderr
-  set -- $@
-
-  while [[ $# -gt 0 ]]; do
-    case $1 in
-      -l|--logfile)
-        lflags+="--logfile $2"
-        shift 2
-      ;;
-      *)
-        break
-      ;;
-    esac
-  done
-
-  tar v "$@" 2>&1 |\
-  while read line; do
-      stderr+=$line
-      total=$((total+1))
-      log $lflags "--prg:$total" "Unpacking ${line##*/}"
-  done
-  
-  if [ ! ${PIPESTATUS[0]} -eq 0 ]; then
-    echo >&2 $stderr
-  fi
-
-  return ${PIPESTATUS[0]}
-}
