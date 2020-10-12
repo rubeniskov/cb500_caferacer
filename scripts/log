@@ -121,10 +121,10 @@ log_wrap() {
   fi
   
   if [ ! -z $show ] || [ ! -z $verbose ]; then
-    eval $cmd 2>&1 | tee -a $logfile
+    eval "$cmd 2>&1" | tee -a $logfile
     exit_code=${PIPESTATUS[0]} 
   else
-    eval $cmd 2>&1 >>$logfile
+    eval "$cmd 2>&1" >>$logfile
     exit_code=$?
   fi
   
