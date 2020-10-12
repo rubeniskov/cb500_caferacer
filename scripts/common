@@ -149,9 +149,9 @@ os_pkg_version() {
 
 os_get_bin_path() {
   path="$(which $1)"
-  if [[ $HOST_OS = "darwin" ]] && [[ -z $path ]]; then
+  if [[ $HOST_OS = "darwin" ]]; then
     path="$(brew --prefix $1)"
-    if [[ ! -z "$path" ]] && [[ ! -f "$path/bin/$1" ]]; then
+    if [[ ! -z "$path" ]] && [[ -f "$path/bin/$1" ]]; then
       echo "$path/bin/$1"
       return 0
     fi

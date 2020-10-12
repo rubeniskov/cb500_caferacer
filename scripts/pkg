@@ -71,14 +71,16 @@ pkg_parse_config() {
     fi
     if [[ $line =~ ^(\[([$tagpattern]+)\])$ ]]; then
       if [ ! -z $pkgname ]; then 
-        echo -ne $pkgconfig | pkg_build_install $pkgname $args
+        if ! echo -ne $pkgconfig | pkg_build_install $pkgname $args; then
+          exit 1
+        fi
       fi
       skip_os=
       pkgname=${BASH_REMATCH[2]}
       pkgconfig=
-      log $largs "Detected $pkgname config"
+      log $largs "detected $pkgname config"
     elif [[ $line =~ ^(\(([$tagpattern]+)\))$ ]]; then
-        log $largs "Detected match os expresion for ${BASH_REMATCH[2]}"
+        log $largs "detected match os expresion for ${BASH_REMATCH[2]}"
         [[ ${BASH_REMATCH[2]} != $HOST_OS ]] && skip_os=1 || skip_os=
     elif [[ -z $skip_os ]]; then  
       [ ! -z "$line" ] && pkgconfig+="$line\n"
@@ -91,23 +93,12 @@ pkg_parse_config() {
 }
 
 pkg_build_install() {
-  local pkgname
-  local pkgconfig
-  local sources
-  local filename
+  local pkgname ctoken tcontent args pkgconfig sources \
+        filename tmpdir patchesdir toolchaindir
   local cflags=$(echo $@|awk -F' -- ' '{ print $2 }')
-  local dflags
   local largs=$(log_get_args $@)
   local pkgargs=$(log_exclude_args $@)
-  local tmpdir
-  local patchesdir
-  local toolchaindir
-  local verbose
-  local args
-  local nproc=$(type nproc &> /dev/null && nproc || sysctl -n hw.ncpu)
-
-  local ctoken
-  local tcontent
+  local dryrun=$(is_flag_present --dry-run $@)
   
   set -- $pkgargs
   
@@ -123,7 +114,7 @@ pkg_build_install() {
     log_errexit $largs "Error a config must be provided" 
   fi
 
-  log $largs <(echo -ne "Config details:\n$(echo -ne "$pkgconfig"|sed -e 's/^/-> /')")
+  log $largs <(echo -ne "config details:\n$(echo -ne "$pkgconfig"|sed -e 's/^/-> /')")
   
   while [[ $# -gt 0 ]]; do
     case $1 in
@@ -201,7 +192,10 @@ pkg_build_install() {
   extension=${url##*.}
 
   log $largs "using temporary directory $tmpdir"
-  pushd $tmpdir > /dev/null
+  log_wrap $largs -- pushd $tmpdir
+
+  log $largs "using toolchain directory $toolchaindir"
+  mkdir -p $toolchaindir
   
   log $largs --header "Installing $pkgname"
   
@@ -210,113 +204,160 @@ pkg_build_install() {
     return 0
   fi
   
-  if [ "$extension" == "git" ] && [ ! -d $sources ]; then
-    pkg_clone $url $sources $version $largs
-  elif [ ! -f $filename ]; then 
-    pkg_download $url $filename $largs
-    if [ ! -z $sha256 ]; then
-      pkg_verify_checksum $filename $sha256 $largs
+  if [ ! -d $sources ]; then
+    if [ "$extension" == "git" ]; then
+      pkg_clone $url $sources $version $largs
+    elif [ ! -f $filename ]; then 
+      pkg_download $url $filename $largs
+      if [ ! -z $sha256 ]; then
+        pkg_verify_checksum $filename $sha256 $largs
+      fi
     fi
   fi
   
-  exit 0
-
   ## Unpacking
-  if [ ! -d $sources ]; then
-    mkdir -p $sources
-    pushd $sources > /dev/null
-    if ! log_wrap_progress $largs --strip 2 "unpack" -- \
-       tar v --strip-components 1 -xf "../$filename"; then
-      popd
-      rm -rf $sources
-    fi
-    popd > /dev/null
+  if [ ! -d $sources ] && [[ $extension == *"z"* ]]; then
+    pkg_unpack $filename $sources $largs
   fi
 
   ## Patching
   if [ ! -z "$patches" ]; then
-    pushd $sources > /dev/null
+    log_wrap $largs -- pushd $sources
     pkg_patchakra $patches
-    popd > /dev/null
+    log_wrap $largs -- popd
   fi
 
-  pushd $sources > /dev/null
+  [ -z $dryrun ] && pushd $sources > /dev/null
 
   if [ ! -z "$preconfig" ]; then
     log_wrap_process $largs "pre-configure" -- \
       "$preconfig"
   fi
 
-  if [ -f configure ]; then
-    mkdir -p build
-    pushd build > /dev/null
-    log_wrap_process $largs "configure" -- \
-      ../configure $cflags --prefix="$toolchaindir" $configflags
-    popd > /dev/null
-  fi
+  pkg_configure $toolchaindir $configflags $largs
 
   if [ ! -z "$postconfig" ]; then
     log_wrap_process $largs "post configure" -- \
       "$postconfig"
   fi
 
-  if [ -f build/Makefile ] || [ -f Makefile ]; then
-    pushd $(dirname $(ls {build,.}/Makefile 2>/dev/null)) > /dev/null
+  if [ ! -z $prebuild ]; then
+    log_wrap_process $largs "pre-build" -- \
+      "$prebuild"
+  fi
 
-    if [ ! -z $prebuild ]; then
-      log_wrap_process $largs "pre-build" -- \
-        "$prebuild"
-    fi
+  pkg_build $largs
 
-    log_wrap_process $largs "build" -- make -j$nproc
+  if [ ! -z $postbuild ]; then
+    log_wrap_process $largs "post-build" -- \
+      "$postbuild"
+  fi
 
-    if [ ! -z $postbuild ]; then
-      log_wrap_process $largs "post-build" -- \
-        "$postbuild"
-    fi
+  if [ ! -z $preinstall ]; then
+    log_wrap_process $largs "pre-install" -- \
+      "$preinstall"
+  fi
 
-    if [ ! -z $preinstall ]; then
-      log_wrap_process $largs "pre-install" -- \
-        "$preinstall"
-    fi
-
-    log_wrap_process $largs "install" -- make install
-    
-    if [ ! -z $postinstall ]; then
-      log_wrap_process $largs "post-install" -- \
-        "$postinstall"
-    fi
-    popd > /dev/null
-  elif ls {bin,lib} &>/dev/null; then
-    log_wrap_progress $largs "install" -- rsync -vrzLR {bin,lib} "$toolchaindir/"
+  pkg_install $toolchaindir $largs
+  
+  if [ ! -z $postinstall ]; then
+    log_wrap_process $largs "post-install" -- \
+      "$postinstall"
   fi
 
   if [ ! -z "$testspec" ]; then
     log_wrap_process $largs "testing $pkgname" -- "$testspec"
   fi
-
-  popd > /dev/null
-  
-  popd > /dev/null
 }
 
-# pkg_unpack() {
+pkg_unpack() {
+  local largs=$(log_get_args $@)
+  local args=$(log_exclude_args $@)
+  local dryrun=$(is_flag_present --dry-run $@)
+  local integrity
+  set -- $args
+  
+  if [ -z $dryrun ]; then
+    while IFS= read -r line; do
+      integrity=1
+      break;
+    done < <(tar -tzf $1 2> /dev/null)
 
-# }
+    if [ -z $integrity ]; then
+      log_errexit "Error file integrity $1"
+    fi
+  fi
 
-# pkg_build(){
+  log_wrap $largs -- mkdir -p $2
+  log_wrap $largs -- pushd $2
+  trap "echo -ne >&2 '\n\nAborting, removing $2\n\n'; rm -rf $2; exit 1" INT
+  if ! log_wrap_progress $largs --strip 2 "unpack" -- \
+      tar v --strip-components 1 -xf "../$1" ; then
+    log_wrap $largs -- popd
+    log_wrap $largs -- rm -rf $2
+  fi
+  log_wrap $largs -- popd
+}
 
-# }
+pkg_build() {
+  local largs=$(log_get_args $@)
+  local args=$(log_exclude_args $@)
+  local nproc=$(type nproc &> /dev/null && nproc || sysctl -n hw.ncpu)
+  set -- $args
 
-# pkg_install(){
+  if [ -f build/Makefile ] || [ -f Makefile ]; then
+    log_wrap $largs -- pushd $(dirname $(ls {build,.}/Makefile 2>/dev/null))
+    log_wrap_process $largs "build" -- make -j$nproc $@
+    log_wrap $largs -- popd
+  fi  
+}
 
-# }
+pkg_install(){
+  local largs=$(log_get_args $@)
+  local args=$(log_exclude_args $@)
+  set -- $args
+
+  if ls {bin,lib} &>/dev/null; then
+    log_wrap_progress $largs "install" -- $(os_get_bin_path rsync) -vrzLR {bin,lib} "$1/"
+  elif [ -f build/Makefile ] || [ -f Makefile ]; then
+    log_wrap $largs -- pushd $(dirname $(ls {build,.}/Makefile 2>/dev/null))
+    log_wrap_process $largs "install" -- make install
+    log_wrap $largs -- popd
+  fi
+}
+
+pkg_configure() {
+  local largs=$(log_get_args $@)
+  local args=$(log_exclude_args $@)
+  local exit_code
+  set -- $args
+
+  if [ -f CMakeLists.txt ]; then
+    log_wrap $largs -- mkdir -p build
+    log_wrap $largs -- pushd build
+    log_wrap_process $largs "configure" -- \
+      cmake .. -DCMAKE_INSTALL_PREFIX:PATH="${1}" ${@:2}
+    exit_code=$?
+    log_wrap $largs -- pushd
+  elif [ -f configure ]; then
+    mkdir -p build
+    log_wrap $largs -- pushd build
+    log_wrap_process $largs "configure" -- \
+      ../configure --prefix="$1" ${@:2}
+    exit_code=$?
+    log_wrap $largs -- popd
+  fi
+
+  return $exit_code
+}
 
 pkg_clone() {
   local largs=$(log_get_args $@)
   local args=$(log_exclude_args $@)
+  local dryrun=$(is_flag_present --dry-run $@)
   set -- $args
   log_wrap_process $largs "fetch sources from $1" -- git clone $1 $2
+
   if [ ! -z $3 ]; then
     log_wrap $largs -- pushd $2
     log_wrap_process $largs "select branch $1" -- git checkout $3
@@ -327,14 +368,17 @@ pkg_clone() {
 pkg_download() {
   local largs=$(log_get_args $@)
   local args=$(log_exclude_args $@)
+  
   set -- $args
-  log_wrap_process $largs --show "download" -- "wget \
+  trap "echo -ne >&2 '\n\nAborting, removing $2\n\n'; rm -f $2; exit 1" INT
+  log_wrap_progress $largs --strip 1 "download" -- wget \
     --no-clobber \
-    --progress=bar:force 2>&1 \
+    --quiet \
+    --show-progress \
+    --progress=bar:force \
     --output-document=$2 \
     ${@:3} \
-    $1 \
-    | log_wrap_wget_progress $largs"
+    $1
 }
 
 pkg_verify_checksum() {

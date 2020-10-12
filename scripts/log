@@ -30,10 +30,10 @@ log() {
   local msg=$(log_get_args_label "$@")
   local logfile=$(log_get_args_logfile $@)
   local verbose=$(log_get_args_has_flag --verbose $@) 
+  local dryrun=$(log_get_args_has_flag --dry-run $@) 
   local showverb
-
+  
   set -- $largs
-
   while [[ $# -gt 0 ]]; do
     case $1 in
       --err)
@@ -67,7 +67,7 @@ log() {
         shift 1
         ;;
       *)
-        break;
+        shift 1
       ;;
     esac
   done
@@ -90,7 +90,7 @@ log() {
     fi
   fi
 
-  if [ ! -z $showverb ] || [ ! -z $verbose ]; then
+  if [ ! -z $verbose ] || [[ ! -z $showverb && -z $dryrun ]]; then
     if [ ! -z $ret  ]; then
       echo -en >&2 "\033[K$msg\r"
     else
@@ -119,12 +119,12 @@ log_wrap() {
     echo -ne "$cmd\n"
     return 0
   fi
-
+  
   if [ ! -z $show ] || [ ! -z $verbose ]; then
-    $cmd 2>&1 | tee -a $logfile
+    eval $cmd 2>&1 | tee -a $logfile
     exit_code=${PIPESTATUS[0]} 
   else
-    $cmd 2>&1 >>$logfile
+    eval $cmd 2>&1 >>$logfile
     exit_code=$?
   fi
   
@@ -132,12 +132,12 @@ log_wrap() {
 }
 
 log_wrap_process() {  
-
   local cmd="$(log_wrap_get_cmd_args "$@")"
   local largs="$(log_get_args "$@")"
   local label=$(log_get_args_label "$@")
   local dryrun=$(log_get_args_has_flag --dry-run $@) 
-
+  local output
+  
   if [ ! -z $dryrun ]; then
     log_wrap $largs -- "$cmd"
     return $?
@@ -158,27 +158,47 @@ EOF
 
 
 log_wrap_progress() {
-  local total=0
+  local count=0
   local cmd="$(log_wrap_get_cmd_args "$@")"
   local label=$(log_get_args_label $@)
   local largs=$(log_get_args $@)
+  local regexp="[0-9]+%"
   local strip=$(fallback $(log_get_args_flag_value --strip $@) 0)
+  local total=$(fallback $(log_get_args_flag_value --total $@) 0)
+  local dryrun=$(log_get_args_has_flag --dry-run $@) 
+  local prg=0
+  local cr=$'\r' nl=$'\n'
+  local line
   
-  log_wrap --show -- $cmd 2>&1 |\
-  while read line; do
-    stderr+=$line
-    total=$((total+1))
-    if [[ $line == '['* ]]; then
-      log $largs "\033[K$line"
-    else
-      log $largs "--prg:$total" "$label ${line:$strip}"
+  if [ ! -z $dryrun ]; then
+    log_wrap $largs -- "$cmd"
+    return $?
+  fi
+  
+  log_wrap --show $largs -- $cmd 2>&1 |\
+  while IFS='' read -d '' -rn 1 c; do
+    if [[ $c == $cr || $c == $nl ]]; then 
+      if [[ $line =~ $regexp ]]; then 
+        prg=${BASH_REMATCH[0]}
+      elif [[ ! $total == "0" ]]; then
+        prg="$(echo "x = $count / $total * 100; scale = 0; x / 1" | bc -l)%"
+      else
+        count=$((count+1))
+        prg=$count
+      fi
+      log $largs "--prg:$prg" "$label ${line:$strip}"
+      line=""
     fi
+    line+=$c
   done
 
   exit_code=${PIPESTATUS[0]}
   
-  if [ ! $exit_code -eq 0 ]; then
-    log_errexit <<<$stderr
+  if [ $exit_code -eq 0 ]; then
+    log $largs --ok "$label"
+  else
+    log $largs --err "$label"
+    log_errexit $largs <(cat $stderr)
   fi
 
   return $exit_code
@@ -207,7 +227,7 @@ log_wrap_get_cmd_args() {
 log_get_args() {
   while [[ $# -gt 0 ]]; do
     case $1 in
-      --logfile|--strip)
+      --logfile|--strip|--total)
         echo -ne " $1 $2"
         shift 2
       ;;
@@ -228,7 +248,7 @@ log_exclude_args() {
   local args
   while [[ $# -gt 0 ]]; do
     case $1 in
-      --logfile|--strip)
+      --logfile|--strip|--total)
         shift 2
       ;;
       --verbose|--dry-run|\
@@ -250,7 +270,7 @@ log_get_args_label() {
   local label
   while [[ $# -gt 0 ]]; do
     case $1 in
-      --logfile|--strip)
+      --logfile|--strip|--total)
         shift 2
       ;;
       --verbose|--dry-run|\
@@ -271,36 +291,17 @@ log_get_args_label() {
   echo ${label:1}
 }
 
-log_wrap_wget_progress() {
-  local flag=false c count cr=$'\r' nl=$'\n'
-  while IFS='' read -d '' -rn 1 c; do
-    if $flag; then
-      printf '%s' "$c"
-    else
-      if [[ $c != $cr && $c != $nl ]]; then
-        count=0
-      else
-        ((count++))
-        if ((count > 1)); then
-          flag=true
-        fi
-      fi
-    fi
-  done
-}
-
 log_errexit() {
   local info
   local infoheader
   local cols=$(tput cols) 
   local logfile=$(log_get_args_logfile $@)
+  local info=$(log_get_args_label $@)
 
-  info="$@"
-
-  if [ -e "$1" ]; then
-    info="$(cat $1)"
+  if [ -e "$info" ]; then
+    info="$(cat $info)"
   fi
-
+  
   if [ -f $logfile ]; then
     extrainfo=$(cat <<-EOF
 Check the logfile $logfile to see more information:
@@ -308,8 +309,6 @@ $(tail $logfile|sed -e 's/^/-> /')
 EOF
 )
   fi
-
-  echo -ne "$info\n" >> $logfile
 
   cat <<-EOF
 
