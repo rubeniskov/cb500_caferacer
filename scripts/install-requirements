@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 SCRIPT_SHELL_NAME="$0"
 SCRIPT_SHELL_ARGS="$@"
 SCRIPT_SHELL_FILENAME="$(basename $0)"
@@ -12,8 +14,16 @@ lflags="--logfile $LOGFILE $SCRIPT_SHELL_ARGS"
 
 requirements=$(cat <<EOF
 rsync>3.2.3
+nproc
 git
 coreutils
+autoconf
+automake
+libtool
+texinfo
+pkg-config
+cmake
+binutils
 EOF
 )
 
@@ -23,14 +33,18 @@ case $HOST_OS in
     xcode-select --install 2> /dev/null
     
     if ! type brew > /dev/null; then
-      log_wrap $lflags --header "Installing brew" -- /bin/bash -c \
+      log_wrap $lflags --header "installing brew" -- /bin/bash -c \
       "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install.sh)" 
     else
       log --ok "brew is already installed"
     fi
   ;;
   linux)
-    sudo apt-get update
+    if [[ "$EUID" -eq 0 ]]; then
+      log_wrap "update pkg list" -- apt-get update
+    else
+      log_wrap "update pkg list" -- sudo apt-get update
+    fi
   ;;
   *) 
     log_errexit $lflags "Invalid operating system $os"
@@ -44,13 +58,13 @@ for req in $requirements; do
   set -- $req_chunks
   bin_path="$(os_get_bin_path $1)"
   if [[ -z "$bin_path" ]]; then
-    os_install_pkg $1
+    log_wrap "install $1 " -- os_install_pkg $1
   elif [[ ! -z "$2" ]]; then
     curv=$(os_get_bin_version "$bin_path")
     if semver "$3 $2 $curv" ; then
       log "Seems you have an old $bin_path@$curv version... \
       and need $1$2$3 so it will install such version" 
-      log_wrap "Installing $1$2$3" -- os_install_pkg $1
+      log_wrap "install $1$2$3" -- os_install_pkg $1
     else
       log --ok "$1 is already installed with the right version $3"
     fi

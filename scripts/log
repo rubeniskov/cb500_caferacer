@@ -27,18 +27,19 @@ log() {
   local color
   local cols=$(tput cols)
   local logfile=$(log_filename)
-  local verbose=$(log_flag_verbose $@)
+  local verbose
   local showverb
-  
+
   while [[ $# -gt 0 ]]; do
     case $1 in
       -l|--logfile)
-        logfile="$(log_filename $2)"
+        logfile=$(log_filename $2)
         shift 2
-      ;;
-      --strip)
-        shift 2
-      ;;
+        ;;
+      -V|--verbose)
+        verbose=1
+        shift 1
+        ;;
       --err)
         label="error"
         color=$COL_RED
@@ -69,25 +70,18 @@ log() {
         showverb=1
         shift 1
         ;;
-      --verbose)
-        verbose=1
-        shift 1
-      ;;
-      --)
-        shift 1
-      ;;
       *)
-        break
+        break;
       ;;
     esac
   done
-
+  
   msg="$@"
   if [ -e "$msg" ]; then
     msg="$(cat $msg)"
   fi
 
-  echo -ne "$msg\n" > $logfile
+  echo -ne "$msg\n" >> $logfile
   
   if [ -z $label ]; then
     if [ ! -z $color ]; then
@@ -132,21 +126,26 @@ log_wrap() {
   local logfile=$(log_flag_logfile $largs)
   local verbose=$(log_flag_verbose $largs)
   local pname=$(log_arg_label $largs)
+  local show=$(is_flag_present --show $largs)
   
-  if [ ! -z $verbose ]; then 
-    log $largs "Wrapping process -> $cmd"
-    $cmd 2>&1 | tee -a $logfile
+  log --logfile $logfile $verbose "Wrapping process -> $cmd"
+  
+  if [ ! -z $show ] || [ ! -z $verbose ]; then 
+    eval "$cmd" 2>&1 | tee -a $logfile
     exit_code=${PIPESTATUS[0]} 
   else
-    ($cmd 2>&1 | tee -a $logfile; exit ${PIPESTATUS[0]}) &> /dev/null
+    eval "$cmd" 2>&1 | tee -a $logfile &> /dev/null
     exit_code=${PIPESTATUS[0]}
   fi
 
   if [ $exit_code -eq 0 ]; then 
-    log $largs --ok "$pname done!"
+    log --logfile $logfile $verbose --ok "$pname"
   else
-    log $largs --err "$pname failed!"
-    log_errexit $largs
+    log --logfile $logfile $verbose --err "$pname"
+    log_errexit --logfile $logfile <(cat <<-EOF
+Execution failed $cmd
+EOF
+)
   fi
   return $exit_code
 }
@@ -155,14 +154,20 @@ log_wrap_progress() {
   local total=0
   local cmd="$(log_wrap_get_cmd_args "$@")"
   local largs="$(log_get_flags "$@")"
+  local logfile=$(log_flag_logfile $largs)
+  local verbose=$(log_flag_verbose $largs)
   local pname=$(log_arg_label $largs)
   local strip=$(echo $largs | get_flag_value --strip 0)
   
-  log_wrap --verbose $@ 2>&1 |\
+  log_wrap --show $@ 2>&1 |\
   while read line; do
     stderr+=$line
     total=$((total+1))
-    log $largs "--prg:$total" "$pname ${line:$strip}"
+    if [[ $line == '['* ]]; then
+      log --logfile $logfile --verbose "\033[K$line"
+    else
+      log --logfile $logfile --verbose "--prg:$total" "$pname ${line:$strip}"
+    fi
   done
 
   exit_code=${PIPESTATUS[0]}
@@ -205,6 +210,9 @@ log_arg_label() {
       ;;
       -s|--strip)
         shift 2
+      ;;
+      --show)
+        shift 1
       ;;
       *)
         break
@@ -251,7 +259,7 @@ log_wrap_wget_progress() {
 }
 
 log_errexit() {
-  local logfile
+  local logfile=$(log_filename)
   local info
   local infoheader
   local cols=$(tput cols) 
@@ -261,8 +269,12 @@ log_errexit() {
   while [[ $# -gt 0 ]]; do
     case $1 in
       -l|--logfile)
+        logfile="$(log_filename $2)"
+        shift 2
+      ;;
+      -V|--verbose)
         logfile="$2"
-        break
+        shift 1
       ;;
       *)
         break
@@ -279,11 +291,12 @@ log_errexit() {
   if [ -f $logfile ]; then
     extrainfo=$(cat <<-EOF
 Check the logfile $logfile to see more information:
+$(tail $logfile|sed -e 's/^/-> /')
 EOF
 )
   fi
 
-  echo -ne "$info\n" > $logfile
+  echo -ne "$info\n" >> $logfile
 
   cat <<-EOF
 

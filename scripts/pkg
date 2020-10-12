@@ -71,7 +71,7 @@ pkg_parse_config() {
     fi
     if [[ $line =~ ^(\[([$tagpattern]+)\])$ ]]; then
       if [ ! -z $pkgname ]; then 
-        pkg_build_install $pkgname $args <<< "$pkgconfig"
+        echo -ne $pkgconfig | pkg_build_install $pkgname $args
       fi
       skip_os=
       pkgname=${BASH_REMATCH[2]}
@@ -83,10 +83,10 @@ pkg_parse_config() {
     elif [[ -z $skip_os ]]; then  
       [ ! -z "$line" ] && pkgconfig+="$line\n"
     fi
-  done <<< "$filecontent"
+  done < <(echo -ne "$filecontent")
 
   if [ ! -z $pkgname ]; then 
-    pkg_build_install $pkgname $args <<< "$pkgconfig"
+    echo -ne $pkgconfig | pkg_build_install $pkgname $args
   fi
 }
 
@@ -103,7 +103,7 @@ pkg_build_install() {
   local toolchaindir
   local verbose
   local args
-  local nproc=$([ type nproc 2> /dev/null ] && nproc || sysctl -n hw.physicalcpu)
+  local nproc=$(type nproc &> /dev/null && nproc || sysctl -n hw.ncpu)
 
   local ctoken
   local tcontent
@@ -177,7 +177,7 @@ pkg_build_install() {
           tcontent="$(eval "\
             export toolchaindir="${toolchaindir}"; \
             export version="${version}"; \
-            echo "$tcontent"")"
+            echo -ne '$tcontent'")"
           # nasty way to create dynamic variable due 
           # there's no way to make an associative array in bash 3
           eval "local $ctoken="\"$tcontent\"""
@@ -189,11 +189,10 @@ pkg_build_install() {
         #ignore comments
       ;;
       *)
-        tcontent+="$line"
+        tcontent+="\n$line"
       ;;
     esac 
-  done <<< "$(echo -ne $pkgconfig)"
-  
+  done < <(echo -ne "$pkgconfig")
   
   if [ ! -z "$ctoken" ]; then
     eval "local $ctoken="\"$tcontent\"""
@@ -205,10 +204,10 @@ pkg_build_install() {
   
   pushd $tmpdir > /dev/null
   
-  log $lflags --header "Installing pkg $pkgname"
-
-  if [ ! -z "$testspec" ] && $testspec &>/dev/null; then
-    log --ok "$pkgname already installed!"
+  log $lflags --header "Installing $pkgname"
+  
+  if [ ! -z "$filecheck" ] && ls $filecheck &>/dev/null; then
+    log $lflags --ok "already installed $pkgname"
     return 0
   fi
 
@@ -222,7 +221,7 @@ pkg_build_install() {
       fi
   else
     if [ ! -f $filename ]; then 
-      log_wrap $lflags --verbose "Download" -- pkg_download \
+      log_wrap $lflags --show "download" -- pkg_download \
         $dflags \
         --output-document=$filename \
         $url
@@ -230,8 +229,8 @@ pkg_build_install() {
 
     if [ -f $filename ] && [ ! -z $sha256 ]; then
       sha256sum=$(sha256sum $filename | awk '{ print $1}')
-      if [ $sha256sum != $sha256 ]; then
-        log --err $lflags "Checking sha256sum failed"
+      if [[ ! $sha256sum = $sha256 ]]; then
+        log --err $lflags "check sha256sum"
         log_errexit $lflags <(cat <<-EOF
 Wrong signature
   Actual: $sha256sum
@@ -240,7 +239,7 @@ Wrong signature
 EOF
 )
       else
-        log --ok $lflags "Checking sha256sum done"
+        log --ok $lflags "check sha256sum"
       fi
     fi
   fi
@@ -249,7 +248,7 @@ EOF
   if [ ! -d $sources ]; then
     mkdir -p $sources
     pushd $sources > /dev/null
-    if ! log_wrap_progress $lflags --strip 2 "Unpack" -- \
+    if ! log_wrap_progress $lflags --strip 2 "unpack" -- \
        tar v --strip-components 1 -xf "../$filename"; then
       popd
       rm -rf $sources
@@ -266,22 +265,21 @@ EOF
 
   pushd $sources > /dev/null
 
-  if [ ! -z "$preconfig" ]; then      
-    log_wrap $lflags "Pre configure" -- \
+  if [ ! -z "$preconfig" ]; then
+    log_wrap $lflags "pre-configure" -- \
       "$preconfig"
   fi
 
   if [ -f configure ]; then
     mkdir -p build
     pushd build > /dev/null
-    
-    log_wrap $lflags "Configure" -- \
-      ../configure $cflags --prefix="$toolchaindir" "$configflags"
+    log_wrap $lflags "configure" -- \
+      ../configure $cflags --prefix="$toolchaindir" $configflags
     popd > /dev/null
   fi
 
   if [ ! -z "$postconfig" ]; then
-    log_wrap $lflags "Post configure" -- \
+    log_wrap $lflags "post configure" -- \
       "$postconfig"
   fi
 
@@ -289,37 +287,39 @@ EOF
     pushd $(dirname $(ls {build,.}/Makefile 2>/dev/null)) > /dev/null
 
     if [ ! -z $prebuild ]; then
-      log_wrap $lflags "Pre build" -- \
+      log_wrap $lflags "pre-build" -- \
         "$prebuild"
     fi
 
-    log_wrap $lflags "Build" -- make -j$nproc
+    log_wrap $lflags "build" -- make -j$nproc
 
     if [ ! -z $postbuild ]; then
-      log_wrap $lflags "Post build" -- \
+      log_wrap $lflags "post-build" -- \
         "$postbuild"
     fi
 
     if [ ! -z $preinstall ]; then
-      log_wrap $lflags "Pre install" -- \
+      log_wrap $lflags "pre-install" -- \
         "$preinstall"
     fi
 
-    log_wrap $lflags "Install" -- make install
+    log_wrap $lflags "install" -- make install
     
     if [ ! -z $postinstall ]; then
-      log_wrap $lflags "Post install" -- \
+      log_wrap $lflags "post-install" -- \
         "$postinstall"
     fi
     popd > /dev/null
   elif ls {bin,lib} &>/dev/null; then
-    log_wrap_progress $lflags "Install" -- rsync -vrzLR {bin,lib} "$toolchaindir/"
+    log_wrap_progress $lflags "install" -- rsync -vrzLR {bin,lib} "$toolchaindir/"
   fi
+
+  if [ ! -z "$testspec" ]; then
+    log_wrap $lflags "testing $pkgname" -- "$testspec"
+  fi
+
   popd > /dev/null
   
-  if [ ! -z "$testspec" ]; then
-    log_wrap $lflags "Testing $pkgname" -- "$testspec"
-  fi
   popd > /dev/null
 }
 

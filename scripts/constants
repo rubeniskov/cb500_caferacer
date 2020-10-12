@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 DIR_SCRIPTS="$(dirname ${BASH_SOURCE[0]})"
+PATH=$PATH:$DIR_SCRIPTS
 DIR_SYSROOT="$(realpath $DIR_SCRIPTS/../sysroot)"
 DIR_TOOLCHAIN="$(realpath $DIR_SCRIPTS/../toolchain)"
 DIR_PATCHES="$(realpath $DIR_SCRIPTS/../patches)"

@@ -1,6 +1,34 @@
 # Honda CB500 Cafe Racer Project
 
+## Getting started
 
+First to get the toolchain ready to build the software, the firmware and dashboard ui has different utilities so it will split into two separated scripts for keep the pkg management isolate of each other. 
+
+Both needs a minimun requirements to manage the dependencies so first execute the minimun requirement script typing: 
+
+```shell
+./scripts/install-requirements
+```
+<img src="./docs/img/output_term_script_install_requirements.gif" />
+
+### Installing firmware dependencies
+
+The firmware is based on stm32 chip so it will need the compiler an stm32 utilities to flash the device, so install it using the following script
+
+```shell
+./scripts/install-stm32-devtools
+```
+<img src="./docs/img/output_term_script_install_stm32_devtools.gif" />
+
+### Installing dashboard UI dependencies
+
+```shell
+./scripts/install-rpi-devtools
+```
+<img src="./docs/img/output_term_script_install_rpi_devtools.gif" />
+
+
+## Design notes
 
 ## Tail design 
 
