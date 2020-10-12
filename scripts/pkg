@@ -51,18 +51,18 @@ pkg_parse_config() {
   local pkgconfig
   local pkgname
   local args
-  local lflags
+  local largs
   local skip_os
   local tagpattern="a-z0-9_-"
   
   if [ ! -t 0 ]; then
     filecontent=`cat`
     args="$@"
-    lflags=$(log_get_flags $@)
+    largs=$(log_get_args $@)
   else
     filecontent=$(cat $1)
     args="${@:2}"
-    lflags=$(log_get_flags $@)
+    largs=$(log_get_args $@)
   fi
   
   while IFS= read -r line; do
@@ -76,9 +76,9 @@ pkg_parse_config() {
       skip_os=
       pkgname=${BASH_REMATCH[2]}
       pkgconfig=
-      log $lflags "Detected $pkgname config"
+      log $largs "Detected $pkgname config"
     elif [[ $line =~ ^(\(([$tagpattern]+)\))$ ]]; then
-        log $lflags "Detected match os expresion for ${BASH_REMATCH[2]}"
+        log $largs "Detected match os expresion for ${BASH_REMATCH[2]}"
         [[ ${BASH_REMATCH[2]} != $HOST_OS ]] && skip_os=1 || skip_os=
     elif [[ -z $skip_os ]]; then  
       [ ! -z "$line" ] && pkgconfig+="$line\n"
@@ -97,7 +97,8 @@ pkg_build_install() {
   local filename
   local cflags=$(echo $@|awk -F' -- ' '{ print $2 }')
   local dflags
-  local lflags=$(log_get_flags $@)
+  local largs=$(log_get_args $@)
+  local pkgargs=$(log_exclude_args $@)
   local tmpdir
   local patchesdir
   local toolchaindir
@@ -108,20 +109,22 @@ pkg_build_install() {
   local ctoken
   local tcontent
   
+  set -- $pkgargs
+  
   if [ ! -t 0 ]; then
-    pkgname=$1
+    pkgname="$1"
     pkgconfig="$(cat)"
     shift 1
-  else
-    pkgname=$2
-    pkgconfig="$(cat $1)"
+  elif [ -e "$1" ]; then
+    pkgname="$2"
+    pkgconfig="$(cat "$1")"
     shift 2
+  else
+    log_errexit $largs "Error a config must be provided" 
   fi
 
-  log $lflags <(echo -ne "Config details:\n$(echo -ne "$pkgconfig"|sed -e 's/^/-> /')")
-
-  set -- $@
-
+  log $largs <(echo -ne "Config details:\n$(echo -ne "$pkgconfig"|sed -e 's/^/-> /')")
+  
   while [[ $# -gt 0 ]]; do
     case $1 in
       -t|--tempdir)
@@ -140,10 +143,6 @@ pkg_build_install() {
         dflags="$2"
         shift 2
       ;;
-      -V|--verbose)
-        verbose=1
-        shift 1
-      ;;
       --)
         break
       ;;
@@ -156,12 +155,12 @@ pkg_build_install() {
   sources=${pkgname}_src
   
   if [ -z "$tmpdir" ]; then
-    log $lflags --err "Temporary directory must be defined\n" 
+    log $largs --err "Temporary directory must be defined\n" 
     log_errexit "The process can't continue due a temporary diretory must be provided"
   fi
 
   if [ ! -d "$tmpdir" ]; then
-    log $lflags --err "Temporary directory must exists\n" 
+    log $largs --err "Temporary directory must exists\n" 
     log_errexit "The process can't continue due a temporary diretory is not exist check $tmpdir"
   fi
   
@@ -200,55 +199,33 @@ pkg_build_install() {
   
   filename="${url##*/}"
   extension=${url##*.}
-  signaturefile="${sha256##*/}"
-  
+
+  log $largs "using temporary directory $tmpdir"
   pushd $tmpdir > /dev/null
   
-  log $lflags --header "Installing $pkgname"
+  log $largs --header "Installing $pkgname"
   
   if [ ! -z "$filecheck" ] && ls $filecheck &>/dev/null; then
-    log $lflags --ok "already installed $pkgname"
+    log $largs --ok "already installed $pkgname"
     return 0
   fi
-
-  ## Download
+  
   if [ "$extension" == "git" ] && [ ! -d $sources ]; then
-      git clone $url $sources
-      if [ ! -z $version ]; then
-        pushd >/dev/null
-        git checkout $version  
-        popd >/dev/null
-      fi
-  else
-    if [ ! -f $filename ]; then 
-      log_wrap $lflags --show "download" -- pkg_download \
-        $dflags \
-        --output-document=$filename \
-        $url
-    fi
-
-    if [ -f $filename ] && [ ! -z $sha256 ]; then
-      sha256sum=$(sha256sum $filename | awk '{ print $1}')
-      if [[ ! $sha256sum = $sha256 ]]; then
-        log --err $lflags "check sha256sum"
-        log_errexit $lflags <(cat <<-EOF
-Wrong signature
-  Actual: $sha256sum
-  Expected: $sha256
-
-EOF
-)
-      else
-        log --ok $lflags "check sha256sum"
-      fi
+    pkg_clone $url $sources $version $largs
+  elif [ ! -f $filename ]; then 
+    pkg_download $url $filename $largs
+    if [ ! -z $sha256 ]; then
+      pkg_verify_checksum $filename $sha256 $largs
     fi
   fi
+  
+  exit 0
 
   ## Unpacking
   if [ ! -d $sources ]; then
     mkdir -p $sources
     pushd $sources > /dev/null
-    if ! log_wrap_progress $lflags --strip 2 "unpack" -- \
+    if ! log_wrap_progress $largs --strip 2 "unpack" -- \
        tar v --strip-components 1 -xf "../$filename"; then
       popd
       rm -rf $sources
@@ -266,20 +243,20 @@ EOF
   pushd $sources > /dev/null
 
   if [ ! -z "$preconfig" ]; then
-    log_wrap $lflags "pre-configure" -- \
+    log_wrap_process $largs "pre-configure" -- \
       "$preconfig"
   fi
 
   if [ -f configure ]; then
     mkdir -p build
     pushd build > /dev/null
-    log_wrap $lflags "configure" -- \
+    log_wrap_process $largs "configure" -- \
       ../configure $cflags --prefix="$toolchaindir" $configflags
     popd > /dev/null
   fi
 
   if [ ! -z "$postconfig" ]; then
-    log_wrap $lflags "post configure" -- \
+    log_wrap_process $largs "post configure" -- \
       "$postconfig"
   fi
 
@@ -287,35 +264,35 @@ EOF
     pushd $(dirname $(ls {build,.}/Makefile 2>/dev/null)) > /dev/null
 
     if [ ! -z $prebuild ]; then
-      log_wrap $lflags "pre-build" -- \
+      log_wrap_process $largs "pre-build" -- \
         "$prebuild"
     fi
 
-    log_wrap $lflags "build" -- make -j$nproc
+    log_wrap_process $largs "build" -- make -j$nproc
 
     if [ ! -z $postbuild ]; then
-      log_wrap $lflags "post-build" -- \
+      log_wrap_process $largs "post-build" -- \
         "$postbuild"
     fi
 
     if [ ! -z $preinstall ]; then
-      log_wrap $lflags "pre-install" -- \
+      log_wrap_process $largs "pre-install" -- \
         "$preinstall"
     fi
 
-    log_wrap $lflags "install" -- make install
+    log_wrap_process $largs "install" -- make install
     
     if [ ! -z $postinstall ]; then
-      log_wrap $lflags "post-install" -- \
+      log_wrap_process $largs "post-install" -- \
         "$postinstall"
     fi
     popd > /dev/null
   elif ls {bin,lib} &>/dev/null; then
-    log_wrap_progress $lflags "install" -- rsync -vrzLR {bin,lib} "$toolchaindir/"
+    log_wrap_progress $largs "install" -- rsync -vrzLR {bin,lib} "$toolchaindir/"
   fi
 
   if [ ! -z "$testspec" ]; then
-    log_wrap $lflags "testing $pkgname" -- "$testspec"
+    log_wrap_process $largs "testing $pkgname" -- "$testspec"
   fi
 
   popd > /dev/null
@@ -323,7 +300,66 @@ EOF
   popd > /dev/null
 }
 
-pkg_download() {
-    wget "$@" --progress=bar:force 2>&1 | log_wrap_wget_progress $@
+# pkg_unpack() {
+
+# }
+
+# pkg_build(){
+
+# }
+
+# pkg_install(){
+
+# }
+
+pkg_clone() {
+  local largs=$(log_get_args $@)
+  local args=$(log_exclude_args $@)
+  set -- $args
+  log_wrap_process $largs "fetch sources from $1" -- git clone $1 $2
+  if [ ! -z $3 ]; then
+    log_wrap $largs -- pushd $2
+    log_wrap_process $largs "select branch $1" -- git checkout $3
+    log_wrap $largs -- popd
+  fi
 }
 
+pkg_download() {
+  local largs=$(log_get_args $@)
+  local args=$(log_exclude_args $@)
+  set -- $args
+  log_wrap_process $largs --show "download" -- "wget \
+    --no-clobber \
+    --progress=bar:force 2>&1 \
+    --output-document=$2 \
+    ${@:3} \
+    $1 \
+    | log_wrap_wget_progress $largs"
+}
+
+pkg_verify_checksum() {
+  local largs=$(log_get_args $@)
+  local dryrun=$(is_flag_present --dry-run $@)
+  local args=$(log_exclude_args $@)
+  set -- $args
+  local cmd="shasum -a 256 $1 | awk '{ print \$1}'"
+
+  if [ ! -z $dryrun ]; then
+    echo $cmd
+    return 0
+  fi
+  local checksum=$(eval $cmd)
+  echo "checksum $checksum"
+  if [[ $checksum = $2 ]]; then
+    log --ok $largs "check sha256sum"
+  else
+    log --err $largs "check sha256sum"
+    log_errexit $largs <(cat <<-EOF
+Wrong signature
+  Actual: $checksum
+  Expected: $2
+
+EOF
+)
+  fi
+}

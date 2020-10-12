@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+export PKG_CONFIG_PATH="$DIR_TOOLCHAIN/lib/pkgconfig"
+export PATH="$PATH:$DIR_TOOLCHAIN/bin"

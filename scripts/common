@@ -69,25 +69,6 @@ vercomp () {
     return 0
 }
 
-get_flag_value() {
-  local fname=$1
-  local fallback=$2 
-  local flags="$(cat)"
-  
-  set -- $flags
-
-  while [[ $# -gt 0 ]]; do
-    if [[ "$fname" == "$1" ]]; then
-      echo $2
-      return 0
-    fi
-    shift 1
-  done
-
-  echo $fallback
-  return 1
-}
-
 is_flag_present() {
   if [[ "${@:2}" = *"$1"* ]]; then
     echo $1
@@ -95,6 +76,23 @@ is_flag_present() {
   fi
 
   return 1
+}
+
+get_flag_value() {
+  local fname=$1 
+  shift 1
+  while [[ $# -gt 0 ]]; do
+    if [[ "$fname" == "$1" ]]; then
+      echo $2
+      return 0
+    fi
+    shift 1
+  done
+  return 1
+}
+
+fallback() {
+  [ -z "$1" ] && echo "$2" || echo "$1"
 }
 
 semver() {
@@ -119,21 +117,39 @@ os_dist_version() {
   esac
 }
 
-os_install_pkg() {
+os_dry_install_pkg() {
   if [[ $HOST_OS = "darwin" ]]; then
-    brew install "$@"
+    echo "brew install $@"
   else
     if [[ "$EUID" -eq 0 ]]; then
-      apt-get install "$@" -yy
+      echo "apt-get install $@ -yy"
     else
-      sudo apt-get install "$@" -yy
+      echo "sudo apt-get install $@ -yy"
     fi
   fi
 }
 
-os_get_bin_path() {
-  path=
+os_dry_check_pkg() {
   if [[ $HOST_OS = "darwin" ]]; then
+    echo "brew info $@"
+  else
+    echo "dpkg -s $@"
+  fi
+}
+
+os_dry_pkg_version() {
+  echo "$(os_dry_check_pkg) $@ 2>/dev/null \
+    | $([ $HOST_OS = "darwin" ] &&  echo "head -n1" || echo "grep 'Version' ") \
+    | sed -ne 's/[^0-9]*\(\([0-9]\.\)\{0,4\}[0-9]\).*/\1/p'"
+}
+
+os_pkg_version() {
+  eval "$(os_dry_pkg_version $@)"
+}
+
+os_get_bin_path() {
+  path="$(which $1)"
+  if [[ $HOST_OS = "darwin" ]] && [[ -z $path ]]; then
     path="$(brew --prefix $1)"
     if [[ ! -z "$path" ]] && [[ ! -f "$path/bin/$1" ]]; then
       echo "$path/bin/$1"
@@ -141,15 +157,9 @@ os_get_bin_path() {
     fi
   fi
 
-  path=$(which $1)
-
-  if [ -z $path ]; then
+  if [ -z "$path" ]; then
     return 1
   fi
   echo $path
   return 0
-}
-
-os_get_bin_version() {
-  echo $($1 --version|sed -ne 's/[^0-9]*\(\([0-9]\.\)\{0,4\}[0-9][^.]\).*/\1/p'|head -n1)
 }

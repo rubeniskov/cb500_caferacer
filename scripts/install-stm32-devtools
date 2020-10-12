@@ -6,12 +6,26 @@ SCRIPT_SHELL_FILENAME=$(basename $0)
 SCRIPT_DIR=$(cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd)
 
 source "$SCRIPT_DIR/pkg"
+source "$SCRIPT_DIR/env"
 
 DIR_PWD=$(pwd)
 DIR_TMP="$(mktempd $SCRIPT_SHELL_FILENAME)"
 LOGFILE="$(pwd)/$SCRIPT_SHELL_FILENAME.log"
 CONFIG_FLAGS="--with-sysroot=$DIR_TOOLCHAIN"
-
+# nproc coreutils
+REQUIREMENTS=$(cat <<EOF
+rsync>3
+git
+autoconf
+automake
+libtool
+texinfo
+pkg-config
+cmake
+make
+wget
+EOF
+)
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -25,12 +39,18 @@ while [[ $# -gt 0 ]]; do
   esac
 done 
 
-log_init $LOGFILE "$SCRIPT_SHELL_ARGS"
+log_init $LOGFILE $SCRIPT_SHELL_ARGS
+
+# set -x
+# if ! $DIR_SCRIPTS/install-requirements \
+#   --logfile $LOGFILE $SCRIPT_SHELL_ARGS <<<$REQUIREMENTS; then
+#   log_errexit "Error installing requirements"
+# fi
 
 pkg_parse_config \
   $DIR_PWD/pkg-stm32-devtools.conf \
   --toolchaindir $DIR_TOOLCHAIN \
   --tempdir $DIR_TMP \
   --logfile $LOGFILE \
-  "$SCRIPT_SHELL_ARGS" \
+  $SCRIPT_SHELL_ARGS \
   -- $CONFIG_FLAGS
