@@ -9,7 +9,7 @@ desc url version filecheck homepage \
 sha256 configflags buildflags \
 preinstall postinstall prebuild \
 postbuild preconfig postconfig \
-testspec patches
+testspec patches installflags hash
 "
 
 # pkg_patchakra dir_patches 
@@ -83,14 +83,16 @@ pkg_config_read_value() {
         temp="${@:2}"
         temp="${temp%\"}"
         temp="${temp#\"}"
-        echo -ne "$temp\n"
+        temp="$temp"
       else
         keepread=
       fi
     elif [ ! -z $keepread ]; then
-      echo -ne "$line\n"
+      temp+=" $line"
     fi
   done < <(cat $fd)
+
+  echo "$temp"|tr -d '\\' | tr -d '\n'
 }
 
 pkg_config_parse_block() {
@@ -234,6 +236,7 @@ pkg_build_install() {
   local toolchaindir="$(pkg_config_block_read_value toolchaindir)"
   local url="$(pkg_config_block_read_value url)"
   local filecheck="$(pkg_config_block_read_value filecheck)"
+  local desc="$(pkg_config_block_read_value desc)"
   
   log $largs <(echo -ne "config details:\n$(echo -ne "$pkgconfig"|sed -e 's/^/-> /')")
   
@@ -257,7 +260,7 @@ pkg_build_install() {
   log $largs "using toolchain directory $toolchaindir"
   mkdir -p $toolchaindir
   
-  log $largs --header "Installing $pkgname"
+  log $largs --header "Installing $pkgname - $desc"
   
   if [ ! -z "$filecheck" ] && eval ls $filecheck &>/dev/null; then
     log $largs --ok "already installed"
@@ -291,13 +294,13 @@ pkg_clone() {
   local largs=$(log_get_args $@)
   local args=$(log_exclude_args $@)
   local url="$(pkg_config_block_read_value url)"
-  local version="$(pkg_config_block_read_value version)"
-  
-  if [ ! -z $version ]; then 
-    args=" --single-branch --branch $version"
+  local hash="$(pkg_config_block_read_value hash)"
+  echo $hash
+  if [ ! -z $hash ]; then 
+    args=" --single-branch --branch $hash"
   fi
   
-  log_wrap_process $largs "fetch sources from $url" -- git clone $args $url
+  log_wrap_process $largs "fetch sources from $url" -- git clone $url $args
 }
 
 pkg_download() {
@@ -391,39 +394,38 @@ pkg_configure() {
   local exit_code=0
   local largs=$(log_get_args $@)
   local args="$(log_exclude_args $@)"
-  local configflags="$(pkg_config_block_read_value configflags)"
+  local configflags=$(pkg_config_block_read_value configflags)
   local prefix="$(pkg_config_block_read_value toolchaindir)"
   local preconfig="$(pkg_config_block_read_value preconfig)"
   local postconfig="$(pkg_config_block_read_value postconfig)"
-
-  # exit
+  
   if [ ! -z "$preconfig" ]; then
     log_wrap_process $largs "pre-configure" -- \
       "$(echo -ne $preconfig)"
   fi
   
-  if [ -f CMakeLists.txt ]; then
+  if [ -f configure ]; then
+    mkdir -p build
+    log_wrap $largs -- pushd build
+    log_wrap_process $largs "configure" -- \
+      ../configure --prefix="$prefix" \
+      $configflags
+    exit_code=$?
+    log_wrap $largs -- popd
+  elif [ -f CMakeLists.txt ]; then
     log_wrap $largs -- mkdir -p build
     log_wrap $largs -- pushd build
     log_wrap_process $largs "configure" -- \
       cmake .. \
         -DCMAKE_C_FLAGS_RELEASE=-DNDEBUG \
         -DCMAKE_CXX_FLAGS_RELEASE=-DNDEBUG \
-        -DCMAKE_INSTALL_PREFIX="$prefix" \
+        -DCMAKE_INSTALL_PREFIX:PATH="$prefix" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_FIND_FRAMEWORK=LAST \
         -DCMAKE_VERBOSE_MAKEFILE=ON \
-        -DCMAKE_SYSROOT="$prefix" \
         -Wno-dev \
-        "$(echo -ne $configflags)"
-    exit_code=$?
-    log_wrap $largs -- pushd
-  elif [ -f configure ]; then
-    mkdir -p build
-    log_wrap $largs -- pushd build
-    log_wrap_process $largs "configure" -- \
-      ../configure --prefix="$prefix" \
-      "$(echo -ne $configflags)"
+        $configflags
+        
     exit_code=$?
     log_wrap $largs -- popd
   fi
@@ -447,10 +449,12 @@ pkg_build() {
       "$prebuild"
   fi
 
-  if [ -f build/Makefile ] || [ -f Makefile ]; then
-    log_wrap $largs -- pushd $(dirname $(ls {build,.}/Makefile 2>/dev/null))
+  if [ -f build/Makefile ]; then
+    log_wrap $largs -- pushd build
     log_wrap_process $largs "build" -- make -j$nproc
     log_wrap $largs -- popd
+  elif [ -f Makefile ]; then
+    log_wrap_process $largs "build" -- make -j$nproc
   fi  
 
   if [ ! -z $postbuild ]; then
@@ -463,6 +467,7 @@ pkg_install() {
   local largs=$(log_get_args $@)
   local preinstall="$(pkg_config_block_read_value preinstall)"
   local postinstall="$(pkg_config_block_read_value postinstall)"
+  local installflags="$(pkg_config_block_read_value installflags)"
   local toolchaindir="$(pkg_config_block_read_value toolchaindir)"
 
   if [ ! -z $preinstall ]; then
@@ -470,12 +475,14 @@ pkg_install() {
       "$preinstall"
   fi
 
-  if ls {bin,lib} &>/dev/null; then
-    log_wrap_progress $largs "install" -- $(os_get_bin_path rsync) -vrzLR {bin,lib} "$toolchaindir/"
-  elif [ -f build/Makefile ] || [ -f Makefile ]; then
-    log_wrap $largs -- pushd $(dirname $(ls {build,.}/Makefile 2>/dev/null))
-    log_wrap_process $largs "install" -- make install
+  if ls {bin,lib,include} &>/dev/null; then
+    log_wrap_progress $largs "install" -- $(os_get_bin_path rsync) -vrzLR {bin,lib,include} "$toolchaindir/"
+  elif [ -f build/Makefile ]; then
+    log_wrap $largs -- pushd build
+    log_wrap_process $largs "install" -- make install "$(echo -ne $installflags)"
     log_wrap $largs -- popd
+  elif [ -f Makefile ]; then
+    log_wrap_process $largs "install" -- make install "$(echo -ne $installflags)"
   fi
 
   if [ ! -z $postinstall ]; then
@@ -488,7 +495,6 @@ pkg_test() {
   local largs=$(log_get_args $@)
   local args=$(log_exclude_args $@)
   local testspec="$(pkg_config_block_read_value testspec)"
-  
   if [ ! -z "$testspec" ]; then
     log_wrap_process $largs "testing" -- "$testspec $args" 
   fi

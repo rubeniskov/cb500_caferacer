@@ -1,5 +1,7 @@
 rsync>3
 git
+m4
+perl
 autoconf
 automake
 libtool
