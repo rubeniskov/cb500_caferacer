@@ -3,8 +3,10 @@
 HOST_OS=$(uname -s | awk '{print tolower($0)}')
 
 DIR_SCRIPTS="$(dirname ${BASH_SOURCE[0]})"
-DIR_SYSROOT="$DIR_SCRIPTS/../sysroot"
-DIR_TOOLCHAIN="$DIR_SCRIPTS/../toolchain/$HOST_OS"
-DIR_PATCHES="$DIR_SCRIPTS/../patches"
+DIR_SCRIPTS=$($DIR_SCRIPTS/realpath $DIR_SCRIPTS)
+DIR_BASE=$($DIR_SCRIPTS/realpath $DIR_SCRIPTS/..)
+DIR_SYSROOT="$DIR_BASE/sysroot"
+DIR_TOOLCHAIN="$DIR_BASE/toolchain/$HOST_OS"
+DIR_PATCHES="$DIR_BASE/patches"
 
 source "$DIR_SCRIPTS/env"

@@ -1,0 +1,9 @@
+rsync>3
+git
+autoconf
+automake
+libtool
+texinfo
+cmake
+make
+wget

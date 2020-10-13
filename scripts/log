@@ -12,7 +12,7 @@ COL_YELLOW=$ESC_SEQ"33;01m"
 COL_BLUE=$ESC_SEQ"34;01m"
 COL_MAGENTA=$ESC_SEQ"35;01m"
 COL_CYAN=$ESC_SEQ"36;01m"
-
+SPINNER_COUNTER=0
 # TABLE=<<-EOF
 # --err error $COL_RED 1
 # --ok ok $COL_GREEN 1
@@ -27,11 +27,11 @@ log() {
   local color
   local cols=$(tput cols)
   local largs=$(log_get_args $@)
-  local msg=$(log_get_args_label "$@")
+  local msg=$(log_get_args_label "$@") 
   local logfile=$(log_get_args_logfile $@)
   local verbose=$(log_get_args_has_flag --verbose $@) 
   local dryrun=$(log_get_args_has_flag --dry-run $@) 
-  local showverb
+  local showverb noformat
   
   set -- $largs
   while [[ $# -gt 0 ]]; do
@@ -55,6 +55,15 @@ log() {
         showverb=1
         shift 1
         ;;
+      --spinner)
+        ret=1
+        label=$(printf "%$(( SPINNER_COUNTER + 1 ))s-%$(( 3 - SPINNER_COUNTER ))s" " ")
+        SPINNER_COUNTER=$(( (SPINNER_COUNTER + 1) % 3 ))
+        color=$COL_YELLOW
+        showverb=1
+        noformat=1
+        shift 1
+        ;;
       --wrn)
         label="warn"
         color=$COL_YELLOW
@@ -76,23 +85,35 @@ log() {
     msg="$(cat $msg)"
   fi
 
+  if [ ! -z $showverb ]; then
+    # sanitize message
+    # $ % & ' ( ) * + , - . / : ; < = > ? @ [ \ ] ^ _ ` { | } ~
+    msg=$(tr -cd '[:alnum:][:blank:][:space:]\!#%&"()*+,-./:;<=>[]@^_`{|}~' <<< "$msg")
+    # limited to terminal width 
+    msg="\033[K${msg:0:$((cols - 10))}"
+  fi
+
   echo -ne "$msg\n" >> $logfile
   
+  if [ -z $noformat ]; then
+    label=$(printf "%5s" $label)
+  fi
+
   if [ -z $label ]; then
     if [ ! -z $color ]; then
       msg="$color$msg$COL_RESET"
     fi
   else
     if [ -z $color ]; then
-      msg="[ $(printf "%5s" $label) ] $msg"
+      msg="[ $label ] $msg"
     else
-      msg="[ $color$(printf "%5s" $label)$COL_RESET ] $msg"
+      msg="[ $color$label$COL_RESET ] $msg"
     fi
   fi
 
   if [ ! -z $verbose ] || [[ ! -z $showverb && -z $dryrun ]]; then
     if [ ! -z $ret  ]; then
-      echo -en >&2 "\033[K$msg\r"
+      echo -en >&2 "$msg\r"
     else
       echo -en >&2 "$msg\n"
     fi
@@ -145,7 +166,12 @@ log_wrap_process() {
 
   log $largs "Wrapping process -> $cmd"
 
-  if log_wrap $largs -- "$cmd"; then 
+  log_wrap $largs --show -- "$cmd" | \
+  while IFS= read -r line; do
+    log $largs --spinner "$line"
+  done
+
+  if [ ${PIPESTATUS[0]} -eq 0 ]; then 
     log $largs --ok "$label"
   else
     log $largs --err "$label"
@@ -233,7 +259,7 @@ log_get_args() {
       ;;
       --verbose|--dry-run|\
       --show|--err|--ok|--prg:*|\
-      --wrn|--header)
+      --wrn|--header|--spinner)
         echo -ne " $1"
         shift 1
       ;;
@@ -253,7 +279,7 @@ log_exclude_args() {
       ;;
       --verbose|--dry-run|\
       --show|--err|--ok|--prg:*|\
-      --wrn|--header)
+      --wrn|--header|--spinner)
         shift 1
       ;;
       *)
@@ -275,7 +301,7 @@ log_get_args_label() {
       ;;
       --verbose|--dry-run|\
       --show|--err|--ok|--prg:*|\
-      --wrn|--header)
+      --wrn|--header|--spinner)
         shift 1
       ;;
       --)
@@ -294,7 +320,6 @@ log_get_args_label() {
 log_errexit() {
   local info
   local infoheader
-  local cols=$(tput cols) 
   local logfile=$(log_get_args_logfile $@)
   local info=$(log_get_args_label $@)
 
