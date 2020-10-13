@@ -21,7 +21,6 @@ SPINNER_COUNTER=0
 # EOF
 
 log() {
-  local ret
   local label
   local msg
   local color
@@ -31,6 +30,7 @@ log() {
   local logfile=$(log_get_args_logfile $@)
   local verbose=$(log_get_args_has_flag --verbose $@) 
   local dryrun=$(log_get_args_has_flag --dry-run $@) 
+  local ret=$(log_get_args_has_flag --ret $@) 
   local showverb noformat
   
   set -- $largs
@@ -156,7 +156,8 @@ log_wrap_process() {
   local cmd="$(log_wrap_get_cmd_args "$@")"
   local largs="$(log_get_args "$@")"
   local label=$(log_get_args_label "$@")
-  local dryrun=$(log_get_args_has_flag --dry-run $@) 
+  local dryrun=$(log_get_args_has_flag --dry-run $@)
+  local noexit=$(log_get_args_has_flag --no-exit $@) 
   local output
   
   if [ ! -z $dryrun ]; then
@@ -170,21 +171,27 @@ log_wrap_process() {
   while IFS= read -r line; do
     log $largs --spinner "$line"
   done
-
+  
   if [ ${PIPESTATUS[0]} -eq 0 ]; then 
     log $largs --ok "$label"
   else
-    log $largs --err "$label"
-    log_errexit $largs <(cat <<-EOF
+    if [ ! -z $noexit ]; then
+      log $largs --warn "$label"
+    else
+      log $largs --err "$label"
+      log_errexit $largs <(cat <<-EOF
 Execution failed $cmd
 EOF
 )
+    fi
   fi
+
+  return ${PIPESTATUS[0]}
 }
 
 
 log_wrap_progress() {
-  local count=0
+  local count=0 exit_code=0
   local cmd="$(log_wrap_get_cmd_args "$@")"
   local label=$(log_get_args_label $@)
   local largs=$(log_get_args $@)
@@ -192,6 +199,7 @@ log_wrap_progress() {
   local strip=$(fallback $(log_get_args_flag_value --strip $@) 0)
   local total=$(fallback $(log_get_args_flag_value --total $@) 0)
   local dryrun=$(log_get_args_has_flag --dry-run $@) 
+  local noexit=$(log_get_args_has_flag --no-exit $@)
   local prg=0
   local cr=$'\r' nl=$'\n'
   local line
@@ -223,8 +231,12 @@ log_wrap_progress() {
   if [ $exit_code -eq 0 ]; then
     log $largs --ok "$label"
   else
-    log $largs --err "$label"
-    log_errexit $largs <(cat $stderr)
+    if [ ! -z $noexit ]; then
+      log $largs --warn "$label"
+    else
+      log $largs --err "$label"
+      log_errexit $largs <(cat $stderr)
+    fi
   fi
 
   return $exit_code
@@ -257,7 +269,7 @@ log_get_args() {
         echo -ne " $1 $2"
         shift 2
       ;;
-      --verbose|--dry-run|\
+      --verbose|--dry-run|--no-exit|--ret|\
       --show|--err|--ok|--prg:*|\
       --wrn|--header|--spinner)
         echo -ne " $1"
@@ -277,7 +289,7 @@ log_exclude_args() {
       --logfile|--strip|--total)
         shift 2
       ;;
-      --verbose|--dry-run|\
+      --verbose|--dry-run|--no-exit|--ret|\
       --show|--err|--ok|--prg:*|\
       --wrn|--header|--spinner)
         shift 1
@@ -299,7 +311,7 @@ log_get_args_label() {
       --logfile|--strip|--total)
         shift 2
       ;;
-      --verbose|--dry-run|\
+      --verbose|--dry-run|--no-exit|--ret|\
       --show|--err|--ok|--prg:*|\
       --wrn|--header|--spinner)
         shift 1

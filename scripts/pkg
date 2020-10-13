@@ -9,7 +9,7 @@ desc url version filecheck homepage \
 sha256 configflags buildflags \
 preinstall postinstall prebuild \
 postbuild preconfig postconfig \
-testspec patches installflags hash
+testspec patches installflags hash branch
 "
 
 # pkg_patchakra dir_patches 
@@ -272,12 +272,11 @@ pkg_build_install() {
       pkg_clone $largs $sources
     elif [ ! -f $filename ]; then 
       pkg_download $largs $filename
-      pkg_verify_checksum $largs $filename
     fi
   fi
   
-  
   if [ ! -d $sources ] && [[ $extension == *"z"* ]]; then
+    pkg_verify_checksum $largs $filename
     pkg_unpack $filename $sources $largs
   fi
 
@@ -295,22 +294,30 @@ pkg_clone() {
   local args=$(log_exclude_args $@)
   local url="$(pkg_config_block_read_value url)"
   local hash="$(pkg_config_block_read_value hash)"
-  echo $hash
-  if [ ! -z $hash ]; then 
-    args=" --single-branch --branch $hash"
+  local branch="$(pkg_config_block_read_value branch)"
+  set -- $args
+  if [ ! -z $branch ]; then 
+    args=" --single-branch --branch $branch"
   fi
   
-  log_wrap_process $largs "fetch sources from $url" -- git clone $url $args
+  log_wrap_process $largs "fetch sources from $url" -- git clone $url $1 ${@:2}
+
+  if [ ! -z $hash ]; then 
+    log_wrap $largs -- pushd $1
+    log_wrap_process $largs "checking out hash $hash" -- git checkout $hash
+    log_wrap $largs -- popd
+  fi
 }
 
 pkg_download() {
   local largs=$(log_get_args $@)
   local args=$(log_exclude_args $@)
   local url="$(pkg_config_block_read_value url)"
+  local exit_code=0
   set -- $args
   
   trap "echo -ne >&2 '\n\nAborting, removing $1\n\n'; rm -f $1; exit 1" INT
-  log_wrap_progress $largs --strip 1 "download $1" -- wget \
+  log_wrap_progress $largs --no-exit --strip 1 "download $1" -- wget \
     --no-clobber \
     --quiet \
     --show-progress \
@@ -318,6 +325,15 @@ pkg_download() {
     --output-document=$1 \
     "${@:2}" \
     $url
+
+  exit_code=$?
+
+  if [ $exit_code -eq 4 ]; then
+    log $largs --wrn "Some problems trying reach the $url by the connection, stil alive :)"
+  elif [ ! $exit_code -eq 0 ]; then
+    log $largs --err "download $1"
+    log_errexit "Failed to download the file from $url"
+  fi
 }
 
 pkg_verify_checksum() {
@@ -344,8 +360,15 @@ pkg_verify_checksum() {
     log --err $largs "check sha256sum $checksum"
     log_errexit $largs <(cat <<-EOF
 Wrong signature
+
   Actual: $checksum
   Expected: $sha256
+
+File integrity can be compromised, usually referred to as the file becoming corrupted. 
+A file can become corrupted by a variety of ways: faulty storage media, errors in transmission, 
+write errors during copying or moving, software bugs, and so on.
+
+https://en.wikipedia.org/wiki/File_verification
 
 EOF
 )
@@ -475,8 +498,10 @@ pkg_install() {
       "$preinstall"
   fi
 
-  if ls {bin,lib,include} &>/dev/null; then
-    log_wrap_progress $largs "install" -- $(os_get_bin_path rsync) -vrzLR {bin,lib,include} "$toolchaindir/"
+  if ls bin &>/dev/null || ls lib &>/dev/null; then
+    log_wrap_progress $largs "install" -- $(os_get_bin_path rsync) \
+      --ignore-missing-args \
+      -vrzLR {bin,lib,include} "$toolchaindir/"
   elif [ -f build/Makefile ]; then
     log_wrap $largs -- pushd build
     log_wrap_process $largs "install" -- make install "$(echo -ne $installflags)"
