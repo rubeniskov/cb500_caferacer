@@ -1,6 +1,10 @@
+m4 linux
+libtoolize linux
+build-essential linux
+libudev-dev linux
+libsystemd-dev linux
 rsync>3
 git
-m4
 perl
 autoconf
 automake

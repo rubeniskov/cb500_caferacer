@@ -47,8 +47,14 @@ esac
 
 log --header "Checking minimum requirements" 
 
-for req in $requirements; do
-  req_chunks=$(echo $req | sed -e 's/\([><=]\)/ \1 /g')
+while read -r req; do
+  set -- $req
+  if [ ! -z "$2" ] && [[ "$2" != $HOST_OS ]]; then
+    log "skip $1 installation not matchin with this platform"
+    continue
+  fi
+  req_chunks=$(echo $1 | sed -e 's/\([><=]\)/ \1 /g')
+  
   set -- $req_chunks
   if ! $(os_dry_check_pkg) $1 &>/dev/null; then
     if ! log_wrap_process $args "install $1 " -- $(os_dry_install_pkg) $1; then
@@ -66,4 +72,4 @@ for req in $requirements; do
   else
     log $args --ok "$1 is already installed"
   fi
-done
+done <<< "$requirements"

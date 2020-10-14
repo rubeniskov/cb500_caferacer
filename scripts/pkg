@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-
+#cmake -LAH to see all variables
 SCRIPT_DIR="$(cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd)"
 
 source "$SCRIPT_DIR/log"
 
 PKG_CONFIG_BLOCK_TOKENS="\
 desc url version filecheck homepage \
-sha256 configflags buildflags \
+sha256 configflags cmakeflags buildflags \
 preinstall postinstall prebuild \
 postbuild preconfig postconfig \
 testspec patches installflags hash branch
@@ -91,15 +91,14 @@ pkg_config_read_value() {
       temp+=" $line"
     fi
   done < <(cat $fd)
-
-  echo "$temp"|tr -d '\\' | tr -d '\n'
+  echo "${temp//[[:blank:]]/}"|tr -d '\\' | tr -d '\n'
 }
 
 pkg_config_parse_block() {
   local fd ctoken bcontent 
   local varexp varname varvalue
   local tokens
-  local regex='\${?([a-z]+)\}?'
+  local regex='\$\{?([a-z]+)\}?'
 
   if [ -t 0 ] || [ -e "$1" ]; then
     fd=$1
@@ -110,12 +109,12 @@ pkg_config_parse_block() {
   
   while read -r line; do
     s="$line"
-    while [[ "$line" =~ $regex ]]; do 
-        varexp="${BASH_REMATCH[0]}"
-        varname="${BASH_REMATCH[1]}"
-        varvalue="$(echo -ne "$bcontent" | pkg_config_read_value $varname $tokens)"
-        line="${line//$varexp/$varvalue}"
-        s="${s#*"${BASH_REMATCH[1]}"}"
+    while [[ $line =~ $regex ]]; do 
+      varexp="${BASH_REMATCH[0]}"
+      varname="${BASH_REMATCH[1]}"
+      varvalue="$(echo -ne "$bcontent" | pkg_config_read_value $varname $tokens)"
+      line="${line//$varexp/$varvalue}"
+      s="${s#*"${BASH_REMATCH[1]}"}"
     done
     if [ -z "$bcontent" ]; then 
       bcontent="$(printf '%s\n' "$line")"
@@ -246,7 +245,7 @@ pkg_build_install() {
   fi
 
   if [ ! -d "$tempdir" ]; then
-    log $largs --err "Temporary directory must exists\n" 
+    log $largs --err "Temporary directory must exists" 
     log_errexit "The process can't continue due a temporary diretory is not exist check $tempdir"
   fi
 
@@ -258,7 +257,7 @@ pkg_build_install() {
   log_wrap $largs -- pushd $tempdir
 
   log $largs "using toolchain directory $toolchaindir"
-  mkdir -p $toolchaindir
+  mkdir -p "$toolchaindir"
   
   log $largs --header "Installing $pkgname - $desc"
   
@@ -377,6 +376,7 @@ EOF
 
 pkg_unpack() {
   local largs=$(log_get_args $@)
+  local logfile=$(log_get_args_logfile $@)
   local args=$(log_exclude_args $@)
   local dryrun=$(is_flag_present --dry-run $@)
   local integrity
@@ -386,16 +386,24 @@ pkg_unpack() {
     while IFS= read -r line; do
       integrity=1
       break;
-    done < <(tar -tzf $1 2> /dev/null)
+    done < <(tar -tf $1 2> $logfile)
 
     if [ -z $integrity ]; then
-      log_errexit "Error file integrity $1"
+      log $largs --err "Error file integrity"
+      log_errexit $largs <(cat <<-EOF
+Error file integrity $1
+  This file has not a valid format
+  please consider remove this file using 
+    
+    rm $(pwd)/$1
+EOF
+)
     fi
   fi
 
   log_wrap $largs -- mkdir -p $2
   log_wrap $largs -- pushd $2
-  trap "echo -ne >&2 '\n\nAborting, removing $2\n\n'; rm -rf $2; exit 1" INT
+  trap "echo -ne >&2 '\n\nAborting, removing $2\n\n'; rm -f $2; exit 1" INT
   if ! log_wrap_progress $largs --strip 2 "unpack $1" -- \
       tar v --strip-components 1 -xf "../$1" ; then
     log_wrap $largs -- popd
@@ -418,6 +426,7 @@ pkg_configure() {
   local largs=$(log_get_args $@)
   local args="$(log_exclude_args $@)"
   local configflags=$(pkg_config_block_read_value configflags)
+  local cmakeflags=$(pkg_config_block_read_value cmakeflags)
   local prefix="$(pkg_config_block_read_value toolchaindir)"
   local preconfig="$(pkg_config_block_read_value preconfig)"
   local postconfig="$(pkg_config_block_read_value postconfig)"
@@ -427,15 +436,7 @@ pkg_configure() {
       "$(echo -ne $preconfig)"
   fi
   
-  if [ -f configure ]; then
-    mkdir -p build
-    log_wrap $largs -- pushd build
-    log_wrap_process $largs "configure" -- \
-      ../configure --prefix="$prefix" \
-      $configflags
-    exit_code=$?
-    log_wrap $largs -- popd
-  elif [ -f CMakeLists.txt ]; then
+  if [ -f CMakeLists.txt ]; then
     log_wrap $largs -- mkdir -p build
     log_wrap $largs -- pushd build
     log_wrap_process $largs "configure" -- \
@@ -447,8 +448,16 @@ pkg_configure() {
         -DCMAKE_FIND_FRAMEWORK=LAST \
         -DCMAKE_VERBOSE_MAKEFILE=ON \
         -Wno-dev \
-        $configflags
+        $cmakeflags
         
+    exit_code=$?
+    log_wrap $largs -- popd
+  elif [ -f configure ]; then
+    mkdir -p build
+    log_wrap $largs -- pushd build
+    log_wrap_process $largs "configure" -- \
+      ../configure --prefix="$prefix" \
+      $configflags
     exit_code=$?
     log_wrap $largs -- popd
   fi

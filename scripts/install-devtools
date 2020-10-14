@@ -30,10 +30,11 @@ log_init $LOGFILE $SCRIPT_SHELL_ARGS
 if is_flag_present '--verbose' $SCRIPT_SHELL_ARGS; then
   printenv
 fi
-# if ! $DIR_SCRIPTS/install-requirements \
-#   --logfile $LOGFILE $SCRIPT_SHELL_ARGS $DIR_BASE/requirements.txt; then
-#   log_errexit "Error installing requirements"
-# fi
+
+if ! $DIR_SCRIPTS/install-requirements \
+  --logfile $LOGFILE $SCRIPT_SHELL_ARGS $DIR_BASE/requirements.txt; then
+  log_errexit "Error installing requirements"
+fi
 
 for kind in $DEVTOOL_KINDS; do
   pkg_config_parse \
