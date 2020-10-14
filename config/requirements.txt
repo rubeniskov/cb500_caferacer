@@ -1,5 +1,4 @@
 m4 linux
-libtoolize linux
 build-essential linux
 libudev-dev linux
 libsystemd-dev linux

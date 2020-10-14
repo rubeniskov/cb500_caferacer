@@ -37,3 +37,14 @@ rpi_exec_batch() {
 
   ssh -q ${host} <(echo "${sheader}${content}${eheader}")
 }
+
+rpi_copy_sysroot() {
+  $(os_get_bin_path rsync) -vrzLR \
+    "${@:3}" \
+    --safe-links \
+    $1:/lib \
+    $1:/usr/include \
+    $1:/usr/lib \
+    $1:/opt/vc \
+    $2/
+}

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 
 if [ ! $PATH == *"$DIR_TOOLCHAIN/bin"* ]; then
-    export PATH="$DIR_TOOLCHAIN/bin:$PATH"
+    export PATH="$DIR_TOOLCHAIN/bin:$DIR_SCRIPTS:$PATH"
 fi

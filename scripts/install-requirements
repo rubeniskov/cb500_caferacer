@@ -24,7 +24,47 @@ log --header "Checking pkg manager for this os system $HOST_OS"
 
 case $HOST_OS in
   darwin)
-    xcode-select --install 2> /dev/null
+    if ! pkgutil --pkgs=com.apple.pkg.CLTools_Executables >/dev/null; then
+      touch /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress;
+      product=$(softwareupdate -l \
+        | grep "\*.*Command Line" \
+        | head -n 1 | awk -F"*" '{print $2}' \
+        | sed -e 's/^ *//' \
+        | sed -e 's/^Label: //' \
+        | tr -d '\n')
+      softwareupdate -i "$product" --verbose;
+      rm /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress
+      if [ ! $? -eq 0 ]; then
+          log $largs --err "imposible to install commandline tools"
+          log_errexit <(cat <<-EOF
+Try to install manually from: 
+  https://developer.apple.com/download/more/?name=for%20Xcode"
+EOF
+)
+      fi
+    fi
+
+#     if [ $? -eq 0  ]; then
+#         sleep 1
+#         osascript <<EOD
+# tell application "System Events"
+#     tell process "Install Command Line Developer Tools"
+#         keystroke return
+#         click button "Agree" of window "License Agreement"
+#     end tell
+# end tell
+# EOD
+#       if [ ! $? -eq 0 ]; then 
+#         log $largs --err "imposible to install commandline tools"
+#         log_errexit <(cat <<-EOF
+# Try to install manually from: 
+#   https://developer.apple.com/download/more/?name=for%20Xcode"
+# EOF
+# )
+#       fi
+#     else
+#       echo "Command Line Developer Tools are already installed!"
+#     fi
     
     if ! type brew > /dev/null; then
       log_wrap_process $args "installing brew" -- /bin/bash -c \

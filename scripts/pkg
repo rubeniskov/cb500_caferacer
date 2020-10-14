@@ -91,7 +91,7 @@ pkg_config_read_value() {
       temp+=" $line"
     fi
   done < <(cat $fd)
-  echo "${temp//[[:blank:]]/}"|tr -d '\\' | tr -d '\n'
+  echo "$temp"|tr -d '\\' | tr -d '\n'
 }
 
 pkg_config_parse_block() {
@@ -249,13 +249,13 @@ pkg_build_install() {
     log_errexit "The process can't continue due a temporary diretory is not exist check $tempdir"
   fi
 
-  sources=${pkgname}_src
+  sources="$tempdir/${pkgname}_src"
   filename="${url##*/}"
   extension=${url##*.}
-
+  
   log $largs "using temporary directory $tempdir"
   log_wrap $largs -- pushd $tempdir
-
+  
   log $largs "using toolchain directory $toolchaindir"
   mkdir -p "$toolchaindir"
   
@@ -278,9 +278,8 @@ pkg_build_install() {
     pkg_verify_checksum $largs $filename
     pkg_unpack $filename $sources $largs
   fi
-
+  
   log_wrap $largs -- pushd $sources
-
   pkg_patch $largs
   pkg_configure $largs
   pkg_build $largs
@@ -381,7 +380,7 @@ pkg_unpack() {
   local dryrun=$(is_flag_present --dry-run $@)
   local integrity
   set -- $args
-  
+
   if [ -z $dryrun ]; then
     while IFS= read -r line; do
       integrity=1
@@ -408,8 +407,9 @@ EOF
       tar v --strip-components 1 -xf "../$1" ; then
     log_wrap $largs -- popd
     log_wrap $largs -- rm -rf $2
+  else
+    log_wrap $largs -- popd
   fi
-  log_wrap $largs -- popd
 }
 
 pkg_patch() {
@@ -421,13 +421,14 @@ pkg_patch() {
     pkg_patchakra $patches $args
   fi
 }
+
 pkg_configure() {
   local exit_code=0
   local largs=$(log_get_args $@)
   local args="$(log_exclude_args $@)"
   local configflags=$(pkg_config_block_read_value configflags)
   local cmakeflags=$(pkg_config_block_read_value cmakeflags)
-  local prefix="$(pkg_config_block_read_value toolchaindir)"
+  local prefix="$(realpath $(pkg_config_block_read_value toolchaindir))"
   local preconfig="$(pkg_config_block_read_value preconfig)"
   local postconfig="$(pkg_config_block_read_value postconfig)"
   
@@ -435,7 +436,7 @@ pkg_configure() {
     log_wrap_process $largs "pre-configure" -- \
       "$(echo -ne $preconfig)"
   fi
-  
+
   if [ -f CMakeLists.txt ]; then
     log_wrap $largs -- mkdir -p build
     log_wrap $largs -- pushd build
@@ -443,7 +444,7 @@ pkg_configure() {
       cmake .. \
         -DCMAKE_C_FLAGS_RELEASE=-DNDEBUG \
         -DCMAKE_CXX_FLAGS_RELEASE=-DNDEBUG \
-        -DCMAKE_INSTALL_PREFIX:PATH="$prefix" \
+        -DCMAKE_INSTALL_PREFIX="$prefix" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_FIND_FRAMEWORK=LAST \
         -DCMAKE_VERBOSE_MAKEFILE=ON \
@@ -500,7 +501,7 @@ pkg_install() {
   local preinstall="$(pkg_config_block_read_value preinstall)"
   local postinstall="$(pkg_config_block_read_value postinstall)"
   local installflags="$(pkg_config_block_read_value installflags)"
-  local toolchaindir="$(pkg_config_block_read_value toolchaindir)"
+  local toolchaindir="$(realpath $(pkg_config_block_read_value toolchaindir))"
 
   if [ ! -z $preinstall ]; then
     log_wrap_process $largs "pre-install" -- \

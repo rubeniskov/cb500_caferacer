@@ -7,11 +7,12 @@ SCRIPT_DIR=$(cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd)
 
 source "$SCRIPT_DIR/pkg"
 source "$SCRIPT_DIR/env"
+source "$SCRIPT_DIR/rpi"
 
 DIR_PWD=$(pwd)
 DIR_TMP="$(mktempd $SCRIPT_SHELL_FILENAME)"
-LOGFILE="$(pwd)/$SCRIPT_SHELL_FILENAME.log"
-DEVTOOL_KINDS="req stm rpi"
+LOGFILE="$(pwd)/log/$SCRIPT_SHELL_FILENAME.log"
+DEVTOOL_KINDS="req stm"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -31,16 +32,29 @@ if is_flag_present '--verbose' $SCRIPT_SHELL_ARGS; then
   printenv
 fi
 
-if ! $DIR_SCRIPTS/install-requirements \
-  --logfile $LOGFILE $SCRIPT_SHELL_ARGS $DIR_BASE/requirements.txt; then
-  log_errexit "Error installing requirements"
-fi
+# if ! $DIR_SCRIPTS/install-requirements \
+#   --logfile $LOGFILE $SCRIPT_SHELL_ARGS $DIR_BASE/config/requirements.txt; then
+#   log_errexit "Error installing requirements"
+# fi
 
 for kind in $DEVTOOL_KINDS; do
   pkg_config_parse \
-    $DIR_BASE/pkg-${kind}-devtools.conf \
+    $DIR_BASE/config/pkg-${kind}-devtools.conf \
     --toolchaindir $DIR_TOOLCHAIN \
     --tempdir $DIR_TMP \
     --logfile $LOGFILE \
     $SCRIPT_SHELL_ARGS
 done
+
+
+# DIR_SYSROOT="$DIR_BASE/sysroot"
+# rpi_copy_sysroot pi@raspberrypi.local $DIR_SYSROOT
+
+pkg_config_parse \
+  $DIR_BASE/config/pkg-${kind}-devtools.conf \
+  --toolchaindir $DIR_TOOLCHAIN \
+  --tempdir $DIR_TMP \
+  --logfile $LOGFILE \
+  --sysroot $DIR_SYSROOT \
+  $SCRIPT_SHELL_ARGS
+

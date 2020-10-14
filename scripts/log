@@ -81,7 +81,7 @@ log() {
     esac
   done
   
-  if [ -f "$msg" ]; then
+  if [[ "$msg" == "/"* ]] && [ -e "$msg" ]; then
     msg="$(cat $msg)"
   fi
 
@@ -123,8 +123,9 @@ log() {
 }
 
 log_init() {
-   log --logfile $1 "Using logfile $1"
-   echo "" > "$1"
+  mkdir -p "$(dirname $1)"
+  log --logfile $1 "Using logfile $1"
+  echo "" > "$1"
 }
 
 log_wrap() {
