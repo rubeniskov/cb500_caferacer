@@ -49,12 +49,18 @@ done
 
 # DIR_SYSROOT="$DIR_BASE/sysroot"
 # rpi_copy_sysroot pi@raspberrypi.local $DIR_SYSROOT
+# symlinks -rc "$DIR_SYSROOT/usr"
 
 pkg_config_parse \
-  $DIR_BASE/config/pkg-${kind}-devtools.conf \
-  --prefix $DIR_TOOLCHAIN \
-  --tempdir $DIR_TMP \
-  --logfile $LOGFILE \
-  --sysroot $DIR_SYSROOT \
+  $DIR_BASE/config/pkg-rpi-devtools.conf \
+  --prefix "$DIR_TOOLCHAIN" \
+  --tempdir "$DIR_TMP" \
+  --logfile "$LOGFILE" \
+  --sysroot "$DIR_SYSROOT" \
+  --target arm-linux-gnueabihf \
+  --arch armv6zk \
+  --tune arm1176jzf-s \
+  --fpu vfp \
+  --float hard \
   $SCRIPT_SHELL_ARGS
 

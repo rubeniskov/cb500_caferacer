@@ -16,7 +16,6 @@ configure preconfig postconfig configflags cmakeflags \
 "
 
 CMAKE_ARGS="\
--DCMAKE_INSTALL_PREFIX="#{prefix}" \
 -DCMAKE_C_FLAGS_RELEASE=-DNDEBUG \
 -DCMAKE_CXX_FLAGS_RELEASE=-DNDEBUG \
 -DCMAKE_BUILD_TYPE=Release \
@@ -26,7 +25,6 @@ CMAKE_ARGS="\
 "
 
 CONFIG_ARGS="\
---prefix="#{prefix}" \
 --disable-dependency-tracking \
 "
 
@@ -92,10 +90,8 @@ pkg_config_read_value() {
   fi
   
   while IFS= read line; do
-    #echo >&2 "line ---- $line"
     set -- $line
-    if [[ "$1" =~ ^($tokens)$ ]]; then
-      #echo >&2 "token found ---- $varname"
+    if [[ "$1" =~ ^$tokens$ ]]; then
       if [[ "$1" == "$varname" ]]; then
         found=1
         echo "${@:2}"
@@ -524,6 +520,18 @@ pkg_configure() {
   local cmakeflags="$(pkg_config_block_read_value cmakeflags)"
   local preconfig="$(pkg_config_block_read_value preconfig)"
   local postconfig="$(pkg_config_block_read_value postconfig)"
+  local prefix="$(pkg_config_block_read_value prefix)"
+  local sysroot="$(pkg_config_block_read_value sysroot)"
+  
+  if [ ! -z "$prefix" ]; then
+    cmakeargs+=" -DCMAKE_INSTALL_PREFIX="$prefix""
+    configargs+=" --prefix="$prefix""
+  fi
+
+  if [ ! -z "$sysroot" ]; then
+    cmakeargs+=" -DCMAKE_SYSROOT="$prefix""
+    configargs+=" --with-sysroot="$sysroot""
+  fi
   
   if [ ! -z "$preconfig" ]; then
     log_wrap_process $largs "pre-configure" -- <(echo -ne "$preconfig")
@@ -546,8 +554,8 @@ pkg_configure() {
     log_pushd $largs "$builddir"
     log_wrap_process $largs "configure" -- \
       ../configure \
-      $configargs \
-      $configflags
+      "$configargs" \
+      "$configflags"
     exit_code=$?
     log_popd $largs
   fi

@@ -145,6 +145,8 @@ log_wrap() {
     return 0
   fi
   echo -ne "" > /tmp/cmd
+  echo -ne "" > /tmp/stderr
+  echo -ne "" > /tmp/stdout
   if is_fd "$cmd"; then
     cat "$cmd" \
     | while IFS= read -r line || [ -n "$line" ]; do 
@@ -163,7 +165,7 @@ log_wrap() {
   else
     log $largs "Wrapping cmd -> $cmd"
     echo -ne "$cmd" >> /tmp/cmd
-    $cmd 2>/tmp/stderr | while IFS= read -r line; do
+    bash -c "$cmd" 2>/tmp/stderr | while IFS= read -r line; do
       if [ ! -z $show ] || [ ! -z $verbose ]; then
         echo $line
       fi
