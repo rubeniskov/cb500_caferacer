@@ -136,44 +136,79 @@ log_wrap() {
   local verbose=$(log_get_args_has_flag --verbose $@)
   local show=$(log_get_args_has_flag --show $@)
   local dryrun=$(log_get_args_has_flag --dry-run $@)
-  
+
   if [ ! -z $dryrun ]; then
+    if is_fd "$cmd"; then
+      cmd="$(cat $cmd)"
+    fi
     echo -ne "$cmd\n"
     return 0
   fi
-  
-  if [ ! -z $show ] || [ ! -z $verbose ]; then
-    eval "$cmd 2>&1" | tee -a $logfile
-    exit_code=${PIPESTATUS[0]} 
+  echo -ne "" > /tmp/cmd
+  if is_fd "$cmd"; then
+    cat "$cmd" \
+    | while IFS= read -r line || [ -n "$line" ]; do 
+      echo "$line" >> /tmp/cmd
+      echo "$line"
+    done \
+    | bash 2>/tmp/stderr \
+    | while IFS= read -r line; do
+      echo "$line" >> /tmp/stdout
+      if [ ! -z $show ] || [ ! -z $verbose ]; then
+        echo "$line"
+      fi
+      echo "$line" >>$logfile
+    done 
+    exit_code=${PIPESTATUS[2]}
   else
-    eval "$cmd 2>&1" >>$logfile
-    exit_code=$?
+    log $largs "Wrapping cmd -> $cmd"
+    echo -ne "$cmd" >> /tmp/cmd
+    $cmd 2>/tmp/stderr | while IFS= read -r line; do
+      if [ ! -z $show ] || [ ! -z $verbose ]; then
+        echo $line
+      fi
+      echo $line >>$logfile
+    done
+    exit_code=${PIPESTATUS[0]}
   fi
   
+
+  if [[ ! $exit_code -eq 0 ]]; then 
+    log_errexit $largs <(cat <<-EOF
+Execution failed
+  Directory: $(pwd)
+  Command: $(tail -n20 /tmp/cmd)
+  Stderr: $(tail -n20 /tmp/stderr)
+  Stdout: $(tail -n20 /tmp/stdout)
+EOF
+)
+  fi
+
   return $exit_code
 }
 
 log_wrap_process() {  
+  local exit_code=0
   local cmd="$(log_wrap_get_cmd_args "$@")"
   local largs="$(log_get_args "$@")"
   local label=$(log_get_args_label "$@")
   local dryrun=$(log_get_args_has_flag --dry-run $@)
-  local noexit=$(log_get_args_has_flag --no-exit $@) 
-  local output
+  local noexit=$(log_get_args_has_flag --no-exit $@)
   
   if [ ! -z $dryrun ]; then
     log_wrap $largs -- "$cmd"
     return $?
   fi
 
-  log $largs "Wrapping process -> $cmd"
-
-  log_wrap $largs --show -- "$cmd" | \
+  log_wrap $largs --show --no-exit -- "$cmd" | \
   while IFS= read -r line; do
-    log $largs --spinner "$line"
+    log $largs --spinner "-> $line"
   done
   
-  if [ ${PIPESTATUS[0]} -eq 0 ]; then 
+  exit_code=${PIPESTATUS[0]}
+
+
+  if [ $exit_code -eq 0 ]; then 
     log $largs --ok "$label"
   else
     if [ ! -z $noexit ]; then
@@ -181,13 +216,17 @@ log_wrap_process() {
     else
       log $largs --err "$label"
       log_errexit $largs <(cat <<-EOF
-Execution failed $cmd
+Execution failed
+  Directory: $(pwd)
+  Command: $(tail -n20 /tmp/cmd)
+  Stderr: $(tail -n20 /tmp/stderr)
+  Stdout: $(tail -n20 /tmp/stdout)
 EOF
 )
     fi
   fi
 
-  return ${PIPESTATUS[0]}
+  return $exit_code
 }
 
 
@@ -335,6 +374,11 @@ log_errexit() {
   local infoheader
   local logfile=$(log_get_args_logfile $@)
   local info=$(log_get_args_label $@)
+  local noexit=$(log_get_args_has_flag --no-exit $@)
+  
+  if [ ! -z $noexit ]; then
+    return 0
+  fi
 
   if [ -e "$info" ]; then
     info="$(cat $info)"
@@ -342,19 +386,57 @@ log_errexit() {
   
   if [ -f $logfile ]; then
     extrainfo=$(cat <<-EOF
-Check the logfile $logfile to see more information:
-$(tail $logfile|sed -e 's/^/-> /')
+Check the logfile \e]8;;$logfile\e]8;;\e\\ to see more information:
+
+$(tail -n5 $logfile|sed -e 's/^/-> /')
 EOF
 )
   fi
 
-  cat <<-EOF
+  echo >&2 -ne "$(cat <<-EOF
 
 Something wrong happend!! This may help you
 
 $info
 
 $extrainfo
+
+$(log_stacktrace)
+\n
 EOF
+)"
   exit 1
+}
+
+log_stacktrace() {
+  set +o xtrace
+  # Print out the stack trace described by $function_stack  
+  echo "Stack trace:"
+  for ((i=1;i<${#FUNCNAME[@]}-1;i++))
+  do
+    echo -ne " $COL_RED$i$COL_RESET: ${BASH_SOURCE[$i+1]}:${BASH_LINENO[$i]} $COL_GREEN${FUNCNAME[$i]}$COL_RESET(...)\n"
+  done
+}
+
+log_pushd() {
+    local largs=$(log_get_args $@)
+    local dryrun=$(log_get_args_has_flag --dry-run $@) 
+    local args=$(log_exclude_args $@) 
+    set -- "$args"
+    local dirname="$1"
+    DIR_STACK="$dirname ${DIR_STACK:-$PWD}"
+    if [ -z $dryrun ]; then
+      cd "${dirname:?"missing directory name."}"
+    fi
+    log $largs "current dir stack $DIR_STACK"
+}
+   
+log_popd() {
+    local largs=$(log_get_args $@)
+    local dryrun=$(log_get_args_has_flag --dry-run $@) 
+    DIR_STACK="${DIR_STACK#* }"
+    if [ -z $dryrun ]; then
+      cd "${DIR_STACK%% *}"
+    fi
+    log $largs "current dir: $PWD"
 }

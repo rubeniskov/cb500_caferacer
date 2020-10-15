@@ -40,7 +40,7 @@ fi
 for kind in $DEVTOOL_KINDS; do
   pkg_config_parse \
     $DIR_BASE/config/pkg-${kind}-devtools.conf \
-    --toolchaindir $DIR_TOOLCHAIN \
+    --prefix $DIR_TOOLCHAIN \
     --tempdir $DIR_TMP \
     --logfile $LOGFILE \
     $SCRIPT_SHELL_ARGS
@@ -52,7 +52,7 @@ done
 
 pkg_config_parse \
   $DIR_BASE/config/pkg-${kind}-devtools.conf \
-  --toolchaindir $DIR_TOOLCHAIN \
+  --prefix $DIR_TOOLCHAIN \
   --tempdir $DIR_TMP \
   --logfile $LOGFILE \
   --sysroot $DIR_SYSROOT \

@@ -194,3 +194,10 @@ function cwget() {
     done <&3
     exec 3>&-
 }
+
+is_fd() {
+  if [ -e "$1" ]; then
+    return 0
+  fi
+  return 1
+}

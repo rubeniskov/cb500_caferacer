@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
+DIR_SCRIPTS="$(dirname ${BASH_SOURCE[0]})"
+
+source "$DIR_SCRIPTS/constants"
+
 if [ ! $PATH == *"$DIR_TOOLCHAIN/bin"* ]; then
     export PATH="$DIR_TOOLCHAIN/bin:$DIR_SCRIPTS:$PATH"
 fi

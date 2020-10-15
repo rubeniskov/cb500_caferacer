@@ -1,15 +1,33 @@
 #!/usr/bin/env bash
+#darwin /usr/bin/sandbox-exec -f /private/tmp/homebrew20201014-38120-afnjzi.sb nice ruby -W0 -I $LOAD_PATH
+#linux chroot jail 
 #cmake -LAH to see all variables
 SCRIPT_DIR="$(cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd)"
 
 source "$SCRIPT_DIR/log"
 
 PKG_CONFIG_BLOCK_TOKENS="\
-desc url version filecheck homepage \
-sha256 configflags cmakeflags buildflags \
-preinstall postinstall prebuild \
-postbuild preconfig postconfig \
-testspec patches installflags hash branch
+desc url version filecheck homepage sha256 \
+pkgcheck testspec hash branch \
+patches prepatch postpatch \
+install preinstall postinstall installflags \
+build prebuild postbuild buildflags \
+configure preconfig postconfig configflags cmakeflags \
+"
+
+CMAKE_ARGS="\
+-DCMAKE_INSTALL_PREFIX="#{prefix}" \
+-DCMAKE_C_FLAGS_RELEASE=-DNDEBUG \
+-DCMAKE_CXX_FLAGS_RELEASE=-DNDEBUG \
+-DCMAKE_BUILD_TYPE=Release \
+-DCMAKE_FIND_FRAMEWORK=LAST \
+-DCMAKE_VERBOSE_MAKEFILE=ON \
+-Wno-dev \
+"
+
+CONFIG_ARGS="\
+--prefix="#{prefix}" \
+--disable-dependency-tracking \
 "
 
 # pkg_patchakra dir_patches 
@@ -55,10 +73,10 @@ pkg_patchakra() {
 
 
 pkg_config_read_value() {
-  local fd varname tokens temp keepread
+  local fd varname tokens temp found
   local btokens="$(tr ' ' '|' <<<$PKG_CONFIG_BLOCK_TOKENS)"
-
-  if [ -t 0 ] || [ -f "$1" ]; then
+  
+  if [ -t 0 ] || [ -e "$1" ] && [[ "$1" == "/"* ]]; then
     fd=$1
     varname="$2"
     tokens="${@:3}"
@@ -72,33 +90,31 @@ pkg_config_read_value() {
   else
     tokens="$(tr ' ' '|' <<<$tokens)|$btokens"
   fi
-  while read -r line; do
+  
+  while IFS= read line; do
+    #echo >&2 "line ---- $line"
     set -- $line
-    if [[ "$1" =~ $tokens ]]; then
+    if [[ "$1" =~ ^($tokens)$ ]]; then
+      #echo >&2 "token found ---- $varname"
       if [[ "$1" == "$varname" ]]; then
-        if [ ! -z $keepread ]; then
-          log_errexit "Duplicated $1 token"
-        fi
-        keepread=1
-        temp="${@:2}"
-        temp="${temp%\"}"
-        temp="${temp#\"}"
-        temp="$temp"
-      else
-        keepread=
+        found=1
+        echo "${@:2}"
+      elif [ ! -z $found ]; then
+        break
       fi
-    elif [ ! -z $keepread ]; then
-      temp+=" $line"
+    elif [ ! -z $found ]; then
+      echo $line
     fi
   done < <(cat $fd)
-  echo "$temp"|tr -d '\\' | tr -d '\n'
 }
 
-pkg_config_parse_block() {
+pkg_config_interpolate() {
+  # the variables must be accesible from top to bottom 
+  # defining in order os use
   local fd ctoken bcontent 
   local varexp varname varvalue
   local tokens
-  local regex='\$\{?([a-z]+)\}?'
+  local regex='\#\{([a-z]+)\}'
 
   if [ -t 0 ] || [ -e "$1" ]; then
     fd=$1
@@ -107,12 +123,16 @@ pkg_config_parse_block() {
     tokens="$@"
   fi
   
-  while read -r line; do
+  while IFS='' read line; do
     s="$line"
-    while [[ $line =~ $regex ]]; do 
+    while [[ $line =~ $regex ]]; do
       varexp="${BASH_REMATCH[0]}"
       varname="${BASH_REMATCH[1]}"
-      varvalue="$(echo -ne "$bcontent" | pkg_config_read_value $varname $tokens)"
+      varvalue="$(echo -ne "$bcontent" | pkg_config_read_value "$varname" "$tokens")"
+      if [ -z "$varvalue" ]; then
+        log_errexit "Missing token $varexp"
+        exit 1 
+      fi
       line="${line//$varexp/$varvalue}"
       s="${s#*"${BASH_REMATCH[1]}"}"
     done
@@ -121,14 +141,12 @@ pkg_config_parse_block() {
     else
       bcontent="$(printf '%s\n%s' "$bcontent" "$line")"
     fi
-
-    echo "$line"
+    echo -ne "$line\n"
   done < <(cat $fd)
 }
 
 pkg_args_to_config() {
-  set -- "$@"
-  while [[ $# -gt 0 ]]; do
+  while [[ $# -gt 0 ]]; do 
     case $1 in
       --|-)
         shift 1
@@ -166,17 +184,21 @@ pkg_config_parse() {
   # parse the incoming flags from args to serialize as 
   # config to allow variable interpolation
   envconfig="$(pkg_args_to_config $args)"
+  envconfig=$(printf  '%s\n%s %s' "$envconfig" "cmakeargs" "$CMAKE_ARGS")
+  envconfig=$(printf  '%s\n%s %s' "$envconfig" "configargs" "$CONFIG_ARGS")
   tokens="$(awk 'NR==1{printf "%s",$1}; NR>1{printf "|%s",$1}' <<< "$envconfig")"
   log $largs "env tokens detected: $(tr '|' ' ' <<< "$tokens")"
   
   while IFS= read -r line || [ -n "$line" ]; do
+    # ensure one space at least for those lines which are not tokens
+    line="$(sed -e 's/^[[:space:]][[:space:]]*/ /' <<< "$line")"
     if [ -z "$line" ] || [[ "$line" =~ ^[:space:]*# ]]; then 
       #ignore comments or empty lines
       continue
     elif [[ $line =~ ^(\[([a-z0-9_-]+)\])$ ]]; then
-      if [ ! -z $pkgname ]; then 
+      if [ ! -z $pkgname ]; then         
         # add newline at the end for sanitize block
-        if ! echo -ne "$pkgconfig\n" | pkg_config_parse_block $tokens | pkg_build_install $pkgname $tokens $largs; then
+        if ! echo -ne "$pkgconfig"| pkg_build_install $pkgname $tokens $largs; then
           exit 1
         fi
       fi
@@ -198,16 +220,15 @@ pkg_config_parse() {
   done < <(cat $fd)
 
   if [ ! -z $pkgname ]; then
-    echo -ne "$pkgconfig\n" | pkg_config_parse_block $tokens | pkg_build_install $pkgname $tokens $largs
+    if ! echo -ne "$pkgconfig" | pkg_build_install $pkgname $tokens $largs; then
+      exit 1
+    fi
   fi
 }
 
 pkg_build_install() {
-  local fd args tokens envconfig \
-        pkgname pkgconfig \
-        sources filename extension \
-        getval
-  #local cflags=$(echo $@|awk -F' -- ' '{ print $2 }')
+  local fd args tokens \
+        pkgname pkgconfig 
   local largs=$(log_get_args $@)
   local dryrun=$(is_flag_present --dry-run $@)
 
@@ -226,18 +247,11 @@ pkg_build_install() {
   fi
   
   pkgconfig="$(cat $fd)"
-  # create a custom function to extract the values from pkgconfig
-  eval $"function pkg_config_block_read_value() {
-    pkg_config_read_value \$1 "\"\$tokens\"" <<< "\"\$pkgconfig\"";
-  }"
   
-  local tempdir="$(pkg_config_block_read_value tempdir)"
-  local toolchaindir="$(pkg_config_block_read_value toolchaindir)"
-  local url="$(pkg_config_block_read_value url)"
-  local filecheck="$(pkg_config_block_read_value filecheck)"
-  local desc="$(pkg_config_block_read_value desc)"
-  
-  log $largs <(echo -ne "config details:\n$(echo -ne "$pkgconfig"|sed -e 's/^/-> /')")
+  local prefix="$(pkg_config_read_value prefix $tokens <<<"$pkgconfig")"
+  local tempdir="$(pkg_config_read_value tempdir $tokens <<<"$pkgconfig")"
+  local sourcedir="$tempdir/${pkgname}_src"
+  local builddir="$sourcedir/build"
   
   if [ -z "$tempdir" ]; then
     log $largs --err "Temporary directory must be defined" 
@@ -249,42 +263,65 @@ pkg_build_install() {
     log_errexit "The process can't continue due a temporary diretory is not exist check $tempdir"
   fi
 
-  sources="$tempdir/${pkgname}_src"
-  filename="${url##*/}"
-  extension=${url##*.}
+  # extends config with the current context
+  tokens="builddir|sourcedir|$tokens"
+  # define builddir and sourcedir on top
+  pkgconfig="$(printf '%s %s\n%s' "builddir" "$builddir" "$pkgconfig")"
+  pkgconfig="$(printf '%s %s\n%s' "sourcedir" "$sourcedir" "$pkgconfig")"
+  pkgconfig="$(pkg_config_interpolate $tokens <<< "$pkgconfig")"
   
-  log $largs "using temporary directory $tempdir"
-  log_wrap $largs -- pushd $tempdir
+  # create a custom function to extract the values from pkgconfig
+  eval $"function pkg_config_block_read_value() {
+    pkg_config_read_value \"\$1\" "\"\$tokens\"" <<< "\"\$pkgconfig\"";
+  }"
+
   
-  log $largs "using toolchain directory $toolchaindir"
-  mkdir -p "$toolchaindir"
+  local url="$(pkg_config_block_read_value url)"
+  local filecheck="$(pkg_config_block_read_value filecheck)"
+  local desc="$(pkg_config_block_read_value desc)"
+  local filename="${url##*/}"
+  local extension=${url##*.}
+
+  log $largs --header "Install $pkgname - $desc"
   
-  log $largs --header "Installing $pkgname - $desc"
+  log $largs <(echo -ne "config details:\n$(echo -ne "$pkgconfig"|sed -e 's/^/-> /')")
   
-  if [ ! -z "$filecheck" ] && eval ls $filecheck &>/dev/null; then
-    log $largs --ok "already installed"
-    return 0
+  if [ -z "$filecheck" ]; then
+    log $largs --wrn "imposible to verify if is installed, check the configuration"
+    sleep 2
   fi
-  
-  if [ ! -d $sources ]; then
-    if [ "$extension" == "git" ]; then
-      pkg_clone $largs $sources
-    elif [ ! -f $filename ]; then 
-      pkg_download $largs $filename
+
+  if [ -z "$filecheck" ] || ! eval ls $filecheck &>/dev/null; then
+    log $largs "using temporary directory $tempdir"
+    log_pushd $largs "$tempdir"
+    
+    log $largs "using toolchain directory $prefix"
+    mkdir -p "$prefix"
+    
+    if [ ! -d $sourcedir ]; then
+      if [ "$extension" == "git" ]; then
+        pkg_clone $largs $sourcedir
+      elif [ ! -f $filename ]; then 
+        pkg_download $largs $filename
+      fi
     fi
+    
+    if [ ! -d $sourcedir ] && [[ $extension == *"z"* ]]; then
+      pkg_verify_checksum $largs $filename
+      pkg_unpack $filename $sourcedir $largs
+    fi
+    
+    log_pushd $largs "$sourcedir"
+    pkg_patch $largs
+    pkg_configure $largs
+    pkg_build $largs
+    pkg_install $largs
+    pkg_testspec $largs
+  elif [ ! -z "$filecheck" ]; then
+    log $largs --ok "already installed $filecheck"    
   fi
-  
-  if [ ! -d $sources ] && [[ $extension == *"z"* ]]; then
-    pkg_verify_checksum $largs $filename
-    pkg_unpack $filename $sources $largs
-  fi
-  
-  log_wrap $largs -- pushd $sources
-  pkg_patch $largs
-  pkg_configure $largs
-  pkg_build $largs
-  pkg_install $largs
-  pkg_test $largs
+
+  pkg_check $largs
 }
 
 pkg_clone() {
@@ -298,12 +335,12 @@ pkg_clone() {
     args=" --single-branch --branch $branch"
   fi
   
-  log_wrap_process $largs "fetch sources from $url" -- git clone $url $1 ${@:2}
+  log_wrap_process $largs "fetch sourcedir from $url" -- git clone $url $1 ${@:2}
 
   if [ ! -z $hash ]; then 
-    log_wrap $largs -- pushd $1
+    log_pushd $largs $1
     log_wrap_process $largs "checking out hash $hash" -- git checkout $hash
-    log_wrap $largs -- popd
+    log_popd $largs
   fi
 }
 
@@ -315,7 +352,7 @@ pkg_download() {
   set -- $args
   
   trap "echo -ne >&2 '\n\nAborting, removing $1\n\n'; rm -f $1; exit 1" INT
-  log_wrap_progress $largs --no-exit --strip 1 "download $1" -- wget \
+  log_wrap_process $largs --no-exit --strip 1 "download $1" -- wget \
     --no-clobber \
     --quiet \
     --show-progress \
@@ -401,71 +438,122 @@ EOF
   fi
 
   log_wrap $largs -- mkdir -p $2
-  log_wrap $largs -- pushd $2
+  log_pushd $largs $2
   trap "echo -ne >&2 '\n\nAborting, removing $2\n\n'; rm -f $2; exit 1" INT
-  if ! log_wrap_progress $largs --strip 2 "unpack $1" -- \
+  if ! log_wrap_process $largs --strip 2 "unpack $1" -- \
       tar v --strip-components 1 -xf "../$1" ; then
-    log_wrap $largs -- popd
+    log_popd $largs
     log_wrap $largs -- rm -rf $2
   else
-    log_wrap $largs -- popd
+    log_popd $largs
   fi
 }
 
 pkg_patch() {
+  local patchfile url
   local largs=$(log_get_args $@)
   local args="$(log_exclude_args $@)"
+  local patchesdir="$(pkg_config_block_read_value patchesdir)"
   local patches="$(pkg_config_block_read_value patches)"
+  local prepatch="$(pkg_config_block_read_value prepatch)"
+  local postpatch="$(pkg_config_block_read_value postpatch)"
+  local dryrun=$(is_flag_present --dry-run $@)
   
-  if [ ! -z "$patches" ]; then
-    pkg_patchakra $patches $args
+  if [ ! -z "$prepatch" ]; then
+    log_wrap_process $largs "pre-patch" -- <(echo -ne "$prepatch")
   fi
+
+  for patchfile in $patches; do
+    if [[ "$patchfile" =~ ^(ftp|http)s?:// ]]; then
+      mkdir -p patches
+      url="$patchfile"
+      patchfile="patches/${url##*/}"
+      if [ ! -f "$patchfile" ]; then
+        log_wrap $largs --strip 1 -- wget \
+          --no-clobber \
+          --quiet \
+          --show-progress \
+          --progress=bar:force \
+          --output-document="$patchfile" \
+          $url
+      fi
+    fi
+    
+    if [ -d "$patchesdir" ] && [ -f "$patchesdir/$patchfile" ]; then
+      patchfile="$(realpath $patchesdir/$patchfile)"
+    fi
+    # ensure the file exists
+    for filetopatch in lsdiff $patchfile; do
+      if [ ! -z $dryrun ]; then
+        echo "touch $filetopatch"
+      else
+        touch $filetopatch
+      fi
+    done
+
+    if [ ! -z $dryrun ]; then
+      echo "patch -p0 -Nb < $patchfile"
+    else
+      if ! patch -R -p0 -s -f --dry-run < $patchfile &>/dev/null; then
+        if patch -p0 -Nb < $patchfile &>/dev/null; then
+          log --ok "Applied patch $patchfile"
+        else
+          log --err "Error when apply patch $patchfile"
+          log_errexit "The process can't continue due a patch couldn't be able to be applied"
+        fi
+      else
+        log --ok "Already patched $patchfile"
+      fi
+    fi
+
+    if [ ! -z "$postpatch" ]; then
+      log_wrap_process $largs "pre-patch" -- <(echo -ne "$postpatch")
+    fi
+  done
 }
 
 pkg_configure() {
   local exit_code=0
   local largs=$(log_get_args $@)
   local args="$(log_exclude_args $@)"
-  local configflags=$(pkg_config_block_read_value configflags)
-  local cmakeflags=$(pkg_config_block_read_value cmakeflags)
-  local prefix="$(realpath $(pkg_config_block_read_value toolchaindir))"
+  local builddir="$(pkg_config_block_read_value builddir)"
+  local configure="$(pkg_config_block_read_value configure)"
+  local configargs="$(pkg_config_block_read_value configargs)"
+  local configflags="$(pkg_config_block_read_value configflags)"
+  local cmakeargs="$(pkg_config_block_read_value cmakeargs)"
+  local cmakeflags="$(pkg_config_block_read_value cmakeflags)"
   local preconfig="$(pkg_config_block_read_value preconfig)"
   local postconfig="$(pkg_config_block_read_value postconfig)"
   
   if [ ! -z "$preconfig" ]; then
-    log_wrap_process $largs "pre-configure" -- \
-      "$(echo -ne $preconfig)"
+    log_wrap_process $largs "pre-configure" -- <(echo -ne "$preconfig")
   fi
-
-  if [ -f CMakeLists.txt ]; then
-    log_wrap $largs -- mkdir -p build
-    log_wrap $largs -- pushd build
+  
+  if [ ! -z "$configure" ]; then 
+    log_wrap_process $largs "configure" -- <(echo -ne "$configure")
+  elif [ -f CMakeLists.txt ]; then
+    log_wrap $largs -- mkdir -p "$builddir"
+    log_pushd $largs "$builddir"
     log_wrap_process $largs "configure" -- \
       cmake .. \
-        -DCMAKE_C_FLAGS_RELEASE=-DNDEBUG \
-        -DCMAKE_CXX_FLAGS_RELEASE=-DNDEBUG \
-        -DCMAKE_INSTALL_PREFIX="$prefix" \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_FIND_FRAMEWORK=LAST \
-        -DCMAKE_VERBOSE_MAKEFILE=ON \
-        -Wno-dev \
-        $cmakeflags
+        "$cmakeargs" \
+        "$cmakeflags"
         
     exit_code=$?
-    log_wrap $largs -- popd
+    log_popd $largs
   elif [ -f configure ]; then
-    mkdir -p build
-    log_wrap $largs -- pushd build
+    mkdir -p "$builddir"
+    log_pushd $largs "$builddir"
     log_wrap_process $largs "configure" -- \
-      ../configure --prefix="$prefix" \
+      ../configure \
+      $configargs \
       $configflags
     exit_code=$?
-    log_wrap $largs -- popd
+    log_popd $largs
   fi
 
   if [ ! -z "$postconfig" ]; then
-    log_wrap_process $largs "post configure" -- \
-      "$(echo -ne $postconfig)"
+    log_wrap_process $largs "post configure" -- <(echo -ne "$postconfig") 
   fi
 
   return $exit_code
@@ -473,64 +561,84 @@ pkg_configure() {
 
 pkg_build() {
   local largs=$(log_get_args $@)
+  local builddir="$(pkg_config_block_read_value builddir)"
   local prebuild="$(pkg_config_block_read_value prebuild)"
   local postbuild="$(pkg_config_block_read_value postbuild)"
+  local build="$(pkg_config_block_read_value build)"
   local nproc=$(type nproc &> /dev/null && nproc || sysctl -n hw.ncpu)
 
-  if [ ! -z $prebuild ]; then
-    log_wrap_process $largs "pre-build" -- \
-      "$prebuild"
+  if [ ! -z "$prebuild" ]; then
+    log_wrap_process $largs "pre-build" -- <(echo -ne "$prebuild")
   fi
 
-  if [ -f build/Makefile ]; then
-    log_wrap $largs -- pushd build
+  if [ ! -z "$build" ]; then
+    log_wrap_process $largs "build" -- <(echo -ne "$build")
+  elif [ -f "$builddir/Makefile" ]; then
+    log_pushd $largs "$builddir"
     log_wrap_process $largs "build" -- make -j$nproc
-    log_wrap $largs -- popd
+    log_popd $largs
   elif [ -f Makefile ]; then
     log_wrap_process $largs "build" -- make -j$nproc
   fi  
 
-  if [ ! -z $postbuild ]; then
-    log_wrap_process $largs "post-build" -- \
-      "$postbuild"
+  if [ ! -z "$postbuild" ]; then
+    log_wrap_process $largs "post-build" -- <(echo -ne "$postbuild")
   fi
 }
 
 pkg_install() {
   local largs=$(log_get_args $@)
+  local builddir="$(pkg_config_block_read_value builddir)"
   local preinstall="$(pkg_config_block_read_value preinstall)"
   local postinstall="$(pkg_config_block_read_value postinstall)"
   local installflags="$(pkg_config_block_read_value installflags)"
-  local toolchaindir="$(realpath $(pkg_config_block_read_value toolchaindir))"
+  local install="$(pkg_config_block_read_value install)"
+  local filecheck="$(pkg_config_block_read_value filecheck)"
+  local prefix="$(realpath $(pkg_config_block_read_value prefix))"
 
-  if [ ! -z $preinstall ]; then
-    log_wrap_process $largs "pre-install" -- \
-      "$preinstall"
+  if [ ! -z "$preinstall" ]; then
+    log_wrap_process $largs "pre-install" -- <(echo -ne "$preinstall")
   fi
 
-  if ls bin &>/dev/null || ls lib &>/dev/null; then
-    log_wrap_progress $largs "install" -- $(os_get_bin_path rsync) \
-      --ignore-missing-args \
-      -vrzLR {bin,lib,include} "$toolchaindir/"
-  elif [ -f build/Makefile ]; then
-    log_wrap $largs -- pushd build
+  if [ ! -z "$install" ]; then
+    log_wrap_process $largs "install" -- <(echo -ne "$install")
+  elif [ -f "$builddir/Makefile" ]; then
+    log_pushd $largs "$builddir"
     log_wrap_process $largs "install" -- make install "$(echo -ne $installflags)"
-    log_wrap $largs -- popd
+    log_popd $largs
   elif [ -f Makefile ]; then
     log_wrap_process $largs "install" -- make install "$(echo -ne $installflags)"
+  elif ls bin &>/dev/null || ls lib &>/dev/null; then
+    log_wrap_process $largs "install" -- $(os_get_bin_path rsync) \
+      --ignore-missing-args \
+      -vrzLR {bin,lib,include} "$prefix/"
+  else
+    log $largs --err "Nothing detected to install"
+    log_errexit $largs "The process has stopped due there's no strategy found to install this package"
   fi
 
-  if [ ! -z $postinstall ]; then
-    log_wrap_process $largs "post-install" -- \
-      "$postinstall"
+  if [ ! -z "$postinstall" ]; then
+    log_wrap_process $largs "post-install" -- <(echo -ne "$postinstall")
+  fi
+
+  if [ ! -z "$filecheck" ] && ! eval ls $filecheck &>/dev/null; then
+    log $largs --err --ret "the installation is not completed check $filecheck"
+    return 0
   fi
 }
 
-pkg_test() {
+pkg_testspec() {
   local largs=$(log_get_args $@)
-  local args=$(log_exclude_args $@)
   local testspec="$(pkg_config_block_read_value testspec)"
   if [ ! -z "$testspec" ]; then
-    log_wrap_process $largs "testing" -- "$testspec $args" 
+    log_wrap_process $largs "testing" -- <(echo -ne "$testspec")
+  fi
+}
+
+pkg_check() {
+  local largs=$(log_get_args $@)
+  local pkgcheck="$(pkg_config_block_read_value pkgcheck)"
+  if [ ! -z "$pkgcheck" ]; then
+    log_wrap_process $largs "check" -- <(echo -ne "$pkgcheck")
   fi
 }
