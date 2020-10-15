@@ -12,7 +12,7 @@ pkgcheck testspec hash branch \
 patches prepatch postpatch \
 install preinstall postinstall installflags \
 build prebuild postbuild buildflags \
-configure preconfig postconfig configflags cmakeflags \
+configure preconfig postconfig configflags cmakeflags
 "
 
 CMAKE_ARGS="\
@@ -21,11 +21,11 @@ CMAKE_ARGS="\
 -DCMAKE_BUILD_TYPE=Release \
 -DCMAKE_FIND_FRAMEWORK=LAST \
 -DCMAKE_VERBOSE_MAKEFILE=ON \
--Wno-dev \
+-Wno-dev
 "
 
 CONFIG_ARGS="\
---disable-dependency-tracking \
+--disable-dependency-tracking
 "
 
 # pkg_patchakra dir_patches 
@@ -91,15 +91,15 @@ pkg_config_read_value() {
   
   while IFS= read line; do
     set -- $line
-    if [[ "$1" =~ ^$tokens$ ]]; then
+    if [[ "$1" =~ ^($tokens)$ ]]; then
       if [[ "$1" == "$varname" ]]; then
         found=1
         echo "${@:2}"
-      elif [ ! -z $found ]; then
+      elif [ ! -z "$found" ]; then
         break
       fi
-    elif [ ! -z $found ]; then
-      echo $line
+    elif [ ! -z "$found" ]; then
+      echo "$line"
     fi
   done < <(cat $fd)
 }
@@ -271,7 +271,6 @@ pkg_build_install() {
     pkg_config_read_value \"\$1\" "\"\$tokens\"" <<< "\"\$pkgconfig\"";
   }"
 
-  
   local url="$(pkg_config_block_read_value url)"
   local filecheck="$(pkg_config_block_read_value filecheck)"
   local desc="$(pkg_config_block_read_value desc)"
