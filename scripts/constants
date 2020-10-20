@@ -7,3 +7,27 @@ DIR_BASE=$($DIR_SCRIPTS/realpath $DIR_SCRIPTS/..)
 DIR_SYSROOT="$DIR_BASE/sysroot"
 DIR_TOOLCHAIN="$DIR_BASE/toolchain/$HOST_OS"
 DIR_PATCHES="$DIR_BASE/patches"
+
+PKG_CONFIG_BLOCK_TOKENS="\
+desc url version filecheck homepage sha256 \
+pkgcheck testspec hash branch \
+patches prepatch postpatch \
+install preinstall postinstall installflags \
+build prebuild postbuild buildflags \
+configure preconfig postconfig configflags cmakeflags
+"
+
+CMAKE_ARGS="\
+-DCMAKE_C_FLAGS_RELEASE=-DNDEBUG \
+-DCMAKE_CXX_FLAGS_RELEASE=-DNDEBUG \
+-DCMAKE_BUILD_TYPE=Release \
+-DCMAKE_FIND_FRAMEWORK=LAST \
+-DCMAKE_VERBOSE_MAKEFILE=ON \
+-Wno-dev
+"
+
+if [[ $HOST_OS == "darwin" ]]; then
+CONFIG_ARGS="\
+--disable-dependency-tracking
+"
+fi

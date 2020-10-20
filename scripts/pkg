@@ -6,28 +6,6 @@ SCRIPT_DIR="$(cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd)"
 
 source "$SCRIPT_DIR/log"
 
-PKG_CONFIG_BLOCK_TOKENS="\
-desc url version filecheck homepage sha256 \
-pkgcheck testspec hash branch \
-patches prepatch postpatch \
-install preinstall postinstall installflags \
-build prebuild postbuild buildflags \
-configure preconfig postconfig configflags cmakeflags
-"
-
-CMAKE_ARGS="\
--DCMAKE_C_FLAGS_RELEASE=-DNDEBUG \
--DCMAKE_CXX_FLAGS_RELEASE=-DNDEBUG \
--DCMAKE_BUILD_TYPE=Release \
--DCMAKE_FIND_FRAMEWORK=LAST \
--DCMAKE_VERBOSE_MAKEFILE=ON \
--Wno-dev
-"
-
-CONFIG_ARGS="\
---disable-dependency-tracking
-"
-
 # pkg_patchakra dir_patches 
 pkg_patchakra() {
   local os=$HOST_OS
@@ -434,7 +412,7 @@ EOF
 
   log_wrap $largs -- mkdir -p $2
   log_pushd $largs $2
-  trap "echo -ne >&2 '\n\nAborting, removing $2\n\n'; rm -f $2; exit 1" INT
+  trap "echo -ne >&2 '\n\nAborting, removing $2\n\n'; rm -rf $2; exit 1" INT
   if ! log_wrap_process $largs --strip 2 "unpack $1" -- \
       tar v --strip-components 1 -xf "../$1" ; then
     log_popd $largs
@@ -445,7 +423,7 @@ EOF
 }
 
 pkg_patch() {
-  local patchfile url
+  local patchfile url wgetargs
   local largs=$(log_get_args $@)
   local args="$(log_exclude_args $@)"
   local patchesdir="$(pkg_config_block_read_value patchesdir)"
@@ -453,44 +431,55 @@ pkg_patch() {
   local prepatch="$(pkg_config_block_read_value prepatch)"
   local postpatch="$(pkg_config_block_read_value postpatch)"
   local dryrun=$(is_flag_present --dry-run $@)
-  
+  local strip=0
+
   if [ ! -z "$prepatch" ]; then
     log_wrap_process $largs "pre-patch" -- <(echo -ne "$prepatch")
   fi
 
   for patchfile in $patches; do
+    if [[ "$patchfile" =~ ^p([0-9]): ]]; then
+      strip="${BASH_REMATCH[1]}"
+      patchfile="${patchfile#*"${BASH_REMATCH[0]}"}"
+    fi
+    
     if [[ "$patchfile" =~ ^(ftp|http)s?:// ]]; then
-      mkdir -p patches
       url="$patchfile"
-      patchfile="patches/${url##*/}"
+      patchfile="${url##*/}"
+      if [[ "$patchfile" =~ \.zip$ ]]; then
+        wgetargs="| zcat"
+        patchfile="$(basename "$patchfile" .zip)"
+      fi
       if [ ! -f "$patchfile" ]; then
-        log_wrap $largs --strip 1 -- wget \
+        log_wrap $largs --strip 1 -- "wget \
+          -O -
           --no-clobber \
           --quiet \
           --show-progress \
           --progress=bar:force \
-          --output-document="$patchfile" \
-          $url
+          $url \
+          $wgetargs \
+          > "$patchfile""
       fi
     fi
     
     if [ -d "$patchesdir" ] && [ -f "$patchesdir/$patchfile" ]; then
       patchfile="$(realpath $patchesdir/$patchfile)"
     fi
-    # ensure the file exists
-    for filetopatch in lsdiff $patchfile; do
-      if [ ! -z $dryrun ]; then
-        echo "touch $filetopatch"
-      else
-        touch $filetopatch
-      fi
-    done
+    # # ensure the file exists
+    # for filetopatch in lsdiff $patchfile; do
+    #   if [ ! -z $dryrun ]; then
+    #     echo "touch $filetopatch"
+    #   else
+    #     touch $filetopatch
+    #   fi
+    # done
 
     if [ ! -z $dryrun ]; then
-      echo "patch -p0 -Nb < $patchfile"
+      echo "patch -p$strip -Nb < $patchfile"
     else
-      if ! patch -R -p0 -s -f --dry-run < $patchfile &>/dev/null; then
-        if patch -p0 -Nb < $patchfile &>/dev/null; then
+      if ! patch -R -p$strip -s -f --dry-run < $patchfile &>/dev/null; then
+        if patch -p$strip -Nb < $patchfile &>/dev/null; then
           log --ok "Applied patch $patchfile"
         else
           log --err "Error when apply patch $patchfile"
@@ -538,7 +527,7 @@ pkg_configure() {
   
   if [ ! -z "$configure" ]; then 
     log_wrap_process $largs "configure" -- <(echo -ne "$configure")
-  elif [ -f CMakeLists.txt ]; then
+  elif type cmake &>/dev/null && [ -f CMakeLists.txt ]; then
     log_wrap $largs -- mkdir -p "$builddir"
     log_pushd $largs "$builddir"
     log_wrap_process $largs "configure" -- \
